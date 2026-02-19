@@ -659,24 +659,26 @@ function ChallengeCard({r,persp,mode}){
 }
 
 function ConfidenceMeter({thresh,tier,compact}){
-  // Red (left, low %, challenge-friendly) → White (center) → Blue (right, high %, hold)
+  // LEFT=BLUE (hold, high bar) → WHITE → RIGHT=RED (challenge, low bar)
+  // Needle: low threshold → right (red), high threshold → left (blue)
   const pct=Math.max(0,Math.min(1,(thresh-5)/90));
+  const inv=1-pct; // invert so low thresh → right
   const w=compact?72:88,h=compact?44:54;
   const cx=w/2,cy=h-4;
   const R=compact?28:36,nLen=R-8,sw=compact?5:6;
   const id=`m${compact?1:0}`;
-  const na=(-180+pct*180)*Math.PI/180;
+  const na=(-180+inv*180)*Math.PI/180;
   const nx=cx+nLen*Math.cos(na),ny=cy+nLen*Math.sin(na);
   const sx=cx+R*Math.cos(Math.PI),sy=cy+R*Math.sin(Math.PI);
   return(
     <div style={{textAlign:"center",flexShrink:0,width:w}}>
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
         <defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="rgb(214,48,49)"/>
-          <stop offset="30%" stopColor="rgb(235,148,147)"/>
+          <stop offset="0%" stopColor="rgb(33,102,172)"/>
+          <stop offset="30%" stopColor="rgb(146,179,214)"/>
           <stop offset="50%" stopColor="rgb(247,247,247)"/>
-          <stop offset="70%" stopColor="rgb(146,179,214)"/>
-          <stop offset="100%" stopColor="rgb(33,102,172)"/>
+          <stop offset="70%" stopColor="rgb(235,148,147)"/>
+          <stop offset="100%" stopColor="rgb(214,48,49)"/>
         </linearGradient></defs>
         <path d={`M${sx},${sy}A${R},${R},0,0,1,${cx+R},${cy}`} fill="none" stroke={`url(#${id})`} strokeWidth={sw} strokeLinecap="round"/>
         <line x1={cx+.5} y1={cy+.5} x2={nx+.5} y2={ny+.5} stroke="rgba(0,0,0,.1)" strokeWidth="2" strokeLinecap="round"/>
