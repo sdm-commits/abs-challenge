@@ -40,7 +40,7 @@ const LG_OPS=0.719; // 2025 MLB league-average OPS
 // Access: TANGO[bases][outs][strikes][balls]
 const TANGO={"000":{0:[[73,60,50,46],[80,70,60,56],[88,82,76,73]],1:[[71,64,51,37],[78,72,61,47],[85,82,75,65]],2:[[55,50,40,24],[63,59,49,32],[73,69,62,47]]},"100":{0:[[63,50,39,35],[70,59,49,45],[78,72,64,60]],1:[[61,54,40,28],[65,60,49,37],[71,69,62,51]],2:[[44,39,30,17],[48,44,35,22],[56,51,43,31]]},"010":{0:[[65,60,52,47],[72,68,61,57],[76,79,76,73]],1:[[56,54,48,39],[61,60,56,48],[63,64,67,66]],2:[[39,34,28,19],[44,40,33,25],[46,42,37,31]]},"110":{0:[[54,41,32,28],[59,47,37,33],[67,62,55,50]],1:[[50,44,32,22],[54,48,37,26],[56,54,50,42]],2:[[33,29,22,12],[37,32,25,15],[39,34,29,20]]},"001":{0:[[66,58,49,45],[64,67,63,59],[74,77,74,70]],1:[[57,54,47,36],[49,50,52,50],[61,62,64,63]],2:[[40,36,29,19],[32,28,24,19],[44,39,34,28]]},"101":{0:[[58,50,41,37],[58,56,50,45],[66,65,60,55]],1:[[49,46,39,29],[45,45,43,37],[53,53,52,46]],2:[[32,28,23,15],[29,25,21,15],[36,32,27,20]]},"011":{0:[[61,58,51,46],[59,66,66,61],[65,70,69,65]],1:[[50,48,45,38],[42,43,50,53],[49,50,55,56]],2:[[33,29,24,17],[26,23,19,17],[32,28,24,20]]},"111":{0:[[48,37,29,25],[47,37,29,25],[48,37,29,25]],1:[[43,38,28,19],[41,36,28,19],[42,37,28,19]],2:[[27,24,18,10],[26,22,17,10],[27,23,18,10]]}};
 const getTangoThresh=(bases,outs,balls,strikes)=>TANGO[bases]?.[outs]?.[strikes]?.[balls]??50;
-const getTier=(thresh)=>thresh<=25?{label:"Challenge",sub:"Even a hunch is enough",color:"#2563eb",bg:"#eff6ff",border:"#bfdbfe"}:thresh<=45?{label:"Lean challenge",sub:"Worth it if it looked wrong",color:"#16a34a",bg:"#f0fdf4",border:"#bbf7d0"}:thresh<=65?{label:"Toss-up",sub:"Only if you saw it clearly",color:"#d97706",bg:"#fffbeb",border:"#fde68a"}:thresh<=80?{label:"Lean hold",sub:"Need to be pretty sure",color:"#ea580c",bg:"#fff7ed",border:"#fed7aa"}:{label:"Hold",sub:"Only challenge if certain",color:"#dc2626",bg:"#fef2f2",border:"#fecaca"};
+const getTier=(thresh)=>thresh<=25?{label:"Challenge",sub:"Even a hunch is enough",color:"#2563eb",bg:"#f9fafb",border:"#bfdbfe"}:thresh<=45?{label:"Lean challenge",sub:"Worth it if it looked wrong",color:"#16a34a",bg:"#f0fdf4",border:"#bbf7d0"}:thresh<=65?{label:"Toss-up",sub:"Only if you saw it clearly",color:"#d97706",bg:"#fffbeb",border:"#fde68a"}:thresh<=80?{label:"Lean hold",sub:"Need to be pretty sure",color:"#ea580c",bg:"#fff7ed",border:"#fed7aa"}:{label:"Hold",sub:"Only challenge if certain",color:"#dc2626",bg:"#fef2f2",border:"#fecaca"};
 
 function usePlayerStats(gamePk,mode){
   const[stats,setStats]=useState({}); // {playerId: {ops, type:'batter'|'pitcher', name}}
@@ -361,7 +361,7 @@ export default function App(){
                     <button onClick={()=>setMode("live")} style={seg(mode==="live")}>
                       Live{liveGames.length>0&&` (${liveGames.length})`}
                     </button>
-                    <button onClick={()=>setMode("demo")} style={{...seg(mode==="demo"),background:mode==="demo"?"#1e40af":"#f3f4f6",color:mode==="demo"?"#fff":"#6b7280"}}>
+                    <button onClick={()=>setMode("demo")} style={{...seg(mode==="demo"),background:mode==="demo"?"#111827":"#f3f4f6",color:mode==="demo"?"#fff":"#6b7280"}}>
                       WS G7
                     </button>
                   </div>
@@ -451,7 +451,7 @@ export default function App(){
 
                   {mode==="demo"&&(
                     <div>
-                      <div style={{fontSize:11,fontWeight:600,color:"#1e40af",marginBottom:6}}>2025 World Series Game 7</div>
+                      <div style={{fontSize:11,fontWeight:600,color:"#111827",marginBottom:6}}>2025 World Series Game 7</div>
                       <div style={{fontSize:10,color:"#6b7280",marginBottom:8}}>LAD 5, TOR 4 (11 inn) · Rogers Centre</div>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                         <button onClick={()=>setDemoIdx(i=>Math.max(0,i-1))} disabled={demoIdx===0} style={{width:28,height:28,borderRadius:6,border:"1px solid #e5e7eb",background:demoIdx===0?"#f9fafb":"#fff",color:demoIdx===0?"#d1d5db":"#374151",cursor:demoIdx===0?"default":"pointer",fontSize:14,fontWeight:700,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
@@ -460,10 +460,10 @@ export default function App(){
                       </div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>
                         {DEMO_PLAYS.map((dp,di)=>(
-                          <button key={di} onClick={()=>setDemoIdx(di)} style={{padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:demoIdx===di?700:400,border:"none",cursor:"pointer",background:demoIdx===di?"#1e40af":"#eff6ff",color:demoIdx===di?"#fff":"#3b82f6",transition:"all .12s",fontFamily:"inherit"}}>{di+1}</button>
+                          <button key={di} onClick={()=>setDemoIdx(di)} style={{padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:demoIdx===di?700:400,border:"none",cursor:"pointer",background:demoIdx===di?"#111827":"#f9fafb",color:demoIdx===di?"#fff":"#6b7280",transition:"all .12s",fontFamily:"inherit"}}>{di+1}</button>
                         ))}
                       </div>
-                      <div style={{background:"#eff6ff",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#1e3a5f",lineHeight:1.6}}>
+                      <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#374151",lineHeight:1.6}}>
                         <div style={{fontWeight:700,fontSize:12,marginBottom:4}}>{demoPlay.label}</div>
                         <div style={{fontSize:10,color:"#64748b",marginBottom:6}}>{demoPlay.sub}</div>
                         {(()=>{
@@ -476,11 +476,11 @@ export default function App(){
                           return <div style={{display:"flex",gap:8,marginBottom:6}}>
                           <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#dbeafe",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${bBord}`}}>
                             <img src={`${HEADSHOT}${demoPlay.batterId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
-                            <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>AB</div><div style={{fontSize:10,fontWeight:600,color:"#1e3a5f",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(demoPlay.batter)}</div>{bSt?.ops!=null&&<div style={{fontSize:9,color:bBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{bSt.ops.toFixed(3)} OPS</div>}</div>
+                            <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>AB</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(demoPlay.batter)}</div>{bSt?.ops!=null&&<div style={{fontSize:9,color:bBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{bSt.ops.toFixed(3)} OPS</div>}</div>
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#dbeafe",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${pBord}`}}>
                             <img src={`${HEADSHOT}${demoPlay.pitcherId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
-                            <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>P</div><div style={{fontSize:10,fontWeight:600,color:"#1e3a5f",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(demoPlay.pitcher)}</div>{pSt?.ops!=null&&<div style={{fontSize:9,color:pBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{pSt.ops.toFixed(3)} OPA</div>}</div>
+                            <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>P</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(demoPlay.pitcher)}</div>{pSt?.ops!=null&&<div style={{fontSize:9,color:pBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{pSt.ops.toFixed(3)} OPA</div>}</div>
                           </div>
                         </div>;
                         })()}
