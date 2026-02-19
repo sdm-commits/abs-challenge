@@ -35,6 +35,13 @@ function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 const API="https://statsapi.mlb.com/api/v1";
 const LG_OPS=0.719; // 2025 MLB league-average OPS
 
+// Tango's ABS Challenge Thresholds (Feb 2025)
+// Minimum confidence % needed to justify a challenge
+// Access: TANGO[bases][outs][strikes][balls]
+const TANGO={"000":{0:[[73,60,50,46],[80,70,60,56],[88,82,76,73]],1:[[71,64,51,37],[78,72,61,47],[85,82,75,65]],2:[[55,50,40,24],[63,59,49,32],[73,69,62,47]]},"100":{0:[[63,50,39,35],[70,59,49,45],[78,72,64,60]],1:[[61,54,40,28],[65,60,49,37],[71,69,62,51]],2:[[44,39,30,17],[48,44,35,22],[56,51,43,31]]},"010":{0:[[65,60,52,47],[72,68,61,57],[76,79,76,73]],1:[[56,54,48,39],[61,60,56,48],[63,64,67,66]],2:[[39,34,28,19],[44,40,33,25],[46,42,37,31]]},"110":{0:[[54,41,32,28],[59,47,37,33],[67,62,55,50]],1:[[50,44,32,22],[54,48,37,26],[56,54,50,42]],2:[[33,29,22,12],[37,32,25,15],[39,34,29,20]]},"001":{0:[[66,58,49,45],[64,67,63,59],[74,77,74,70]],1:[[57,54,47,36],[49,50,52,50],[61,62,64,63]],2:[[40,36,29,19],[32,28,24,19],[44,39,34,28]]},"101":{0:[[58,50,41,37],[58,56,50,45],[66,65,60,55]],1:[[49,46,39,29],[45,45,43,37],[53,53,52,46]],2:[[32,28,23,15],[29,25,21,15],[36,32,27,20]]},"011":{0:[[61,58,51,46],[59,66,66,61],[65,70,69,65]],1:[[50,48,45,38],[42,43,50,53],[49,50,55,56]],2:[[33,29,24,17],[26,23,19,17],[32,28,24,20]]},"111":{0:[[48,37,29,25],[47,37,29,25],[48,37,29,25]],1:[[43,38,28,19],[41,36,28,19],[42,37,28,19]],2:[[27,24,18,10],[26,22,17,10],[27,23,18,10]]}};
+const getTangoThresh=(bases,outs,balls,strikes)=>TANGO[bases]?.[outs]?.[strikes]?.[balls]??50;
+const getTier=(thresh)=>thresh<=25?{label:"Challenge",sub:"Even a hunch is enough",color:"#2563eb",bg:"#eff6ff",border:"#bfdbfe"}:thresh<=45?{label:"Lean challenge",sub:"Worth it if it looked wrong",color:"#16a34a",bg:"#f0fdf4",border:"#bbf7d0"}:thresh<=65?{label:"Toss-up",sub:"Only if you saw it clearly",color:"#d97706",bg:"#fffbeb",border:"#fde68a"}:thresh<=80?{label:"Lean hold",sub:"Need to be pretty sure",color:"#ea580c",bg:"#fff7ed",border:"#fed7aa"}:{label:"Hold",sub:"Only challenge if certain",color:"#dc2626",bg:"#fef2f2",border:"#fecaca"};
+
 function usePlayerStats(gamePk,mode){
   const[stats,setStats]=useState({}); // {playerId: {ops, type:'batter'|'pitcher', name}}
   const[loading,setLoading]=useState(false);
@@ -231,10 +238,8 @@ export default function App(){
   const[count,setCount]=useState("1-1");
   const[outs,setOuts]=useState(0);
   const[bs,setBs]=useState("000");
-  const[conf,setConf]=useState(70);
   const[inn,setInn]=useState(5);
   const[persp,setPersp]=useState("offense");
-  const[chLeft,setChLeft]=useState(2);
   // Live game state
   const[selectedGame,setSelectedGame]=useState(null);
   const[mode,setMode]=useState("manual"); // "manual" | "live" | "demo"
@@ -283,23 +288,30 @@ export default function App(){
     const c=activeCount,o=activeOuts,b=activeBs;
     if(!RE[o]?.[b]?.[c])return null;
     const cur=RE[o][b][c];
-    return{cur,results:getTrans(c,o,b).map(t=>{
+    const[balls,strikes]=c.split("-").map(Number);
+    const thresh=getTangoThresh(b,o,balls,strikes);
+    const tier=getTier(thresh);
+    return{cur,thresh,tier,results:getTrans(c,o,b).map(t=>{
       let cor;
       if(t.terminal){
-        if(t.newOuts>=3)cor=0; // 3rd out, inning over
+        if(t.newOuts>=3)cor=0;
         else cor=(RE[t.newOuts]?.[t.newBases]?.["0-0"]??null);
         if(cor===null)return null;
-        cor=cor+t.runs; // add runs scored on the play (e.g. bases-loaded walk)
+        cor=cor+t.runs;
       }else{
         cor=RE[o]?.[b]?.[t.to];if(cor===undefined)return null;
       }
       const dRE=cor-cur;
       const adjRE=dRE*matchup.mult;
       const pD=persp==="offense"?adjRE:-adjRE;
-      const go=Math.abs(adjRE)>=0.06;
-      return{...t,cur,cor,dRE,adjRE,pD,go,rel:pD>0,mult:matchup.mult};
+      // Compute the corrected-count threshold too
+      let toThresh=null,toTier=null;
+      if(!t.terminal){const[tb,ts]=t.to.split("-").map(Number);toThresh=getTangoThresh(b,o,tb,ts);toTier=getTier(toThresh);}
+      else if(t.to==="K"){toThresh=null;toTier=null;} // terminal — no further challenge
+      else if(t.to==="BB"){toThresh=null;toTier=null;}
+      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,rel:pD>0,mult:matchup.mult};
     }).filter(Boolean)};
-  },[activeCount,activeOuts,activeBs,activeInn,persp,matchup]);
+  },[activeCount,activeOuts,activeBs,persp,matchup]);
 
   const toggleBase=useCallback(i=>setBs(p=>{const a=p.split("");a[i]=a[i]==="1"?"0":"1";return a.join("")}),[]);
   const seg=(active)=>({padding:"6px 0",flex:1,borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",textAlign:"center",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"});
@@ -506,9 +518,13 @@ export default function App(){
                       </div>
                     </div>
                     <div style={{marginLeft:"auto",textAlign:"right",paddingLeft:8}}>
-                      <div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Run Exp</div>
-                      <div style={{fontSize:26,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
-                      <div style={{fontSize:10,fontWeight:500,color:"#9ca3af",marginTop:2,fontVariantNumeric:"tabular-nums"}}>Inn {activeInn}{activeInn>=10?"+":""}</div>
+                      <div style={{display:"flex",gap:12,justifyContent:"flex-end",alignItems:"flex-end"}}>
+                        <div style={{textAlign:"center"}}>
+                          <div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Run Exp</div>
+                          <div style={{fontSize:22,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
+                        </div>
+                      </div>
+                      {analysis&&<div style={{marginTop:4,display:"flex",justifyContent:"flex-end"}}><ConfidenceMeter thresh={analysis.thresh} tier={analysis.tier} compact/></div>}
                     </div>
                   </div>
 
@@ -591,37 +607,43 @@ function ChallengeCard({r,persp,mode}){
   const[open,setOpen]=useState(false);
   const green="#16a34a",red="#dc2626";
   const mpct=r.mult!==1?((r.mult-1)*100):0;
+  const tier=r.tier;
 
   return(
     <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"hidden",opacity:r.rel?1:.45}}>
-      {/* Simple view - always visible */}
       <div style={{padding:"12px 14px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
           <span style={{fontSize:11,fontWeight:600,color:r.type==="s2b"?green:red}}>{r.label}</span>
-          {r.rel&&<span style={{padding:"4px 12px",borderRadius:6,fontSize:12,fontWeight:700,background:r.go?green:red,color:"#fff"}}>{r.go?"✓ CHALLENGE":"✗ HOLD"}</span>}
           {!r.rel&&<span style={{fontSize:11,color:"#9ca3af"}}>Opponent</span>}
         </div>
 
-        {/* Called → Corrected */}
-        <div style={{display:"flex",alignItems:"center",gap:10,background:"#f9fafb",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
-          <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Called</div><Dots count={r.from} sm/></div>
-          <div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>→</div>
-          <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Corrected</div>{r.terminal?<div style={{fontSize:13,fontWeight:700,color:r.to==="BB"?green:red,padding:"2px 0"}}>{r.to}</div>:<Dots count={r.to} sm/>}</div>
-          <div style={{flex:1}}/>
-          <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>{r.mult!==1?"Adj ΔRE":"ΔRE"}</div></div>
+        {/* Main layout: left = Called→Corrected, right = meter */}
+        <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
+          {/* Called → Corrected */}
+          <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:"#f9fafb",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Called</div><Dots count={r.from} sm/></div>
+            <div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>→</div>
+            <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Corrected</div>{r.terminal?<div style={{fontSize:13,fontWeight:700,color:r.to==="BB"?green:red,padding:"2px 0"}}>{r.to}</div>:<Dots count={r.to} sm/>}</div>
+            <div style={{flex:1}}/>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:20,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>{r.mult!==1?"Adj ΔRE":"ΔRE"}</div>
+            </div>
+          </div>
+
+          {/* Confidence meter */}
+          {r.rel&&<ConfidenceMeter thresh={r.thresh} tier={tier}/>}
         </div>
 
-        {/* Show math toggle */}
         <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:10,color:"#9ca3af",fontFamily:"inherit",display:"flex",alignItems:"center",gap:3}}>
           {open?"Hide":"Show"} math
           <svg width="10" height="10" viewBox="0 0 12 12" style={{transform:open?"rotate(180deg)":"rotate(0deg)",transition:"transform .2s"}}><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
         </button>
       </div>
 
-      {/* Expanded math details */}
       {open&&(
         <div style={{borderTop:"1px solid #f3f4f6",padding:"12px 14px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,background:"#f9fafb",borderRadius:8,padding:12,marginBottom:r.mult!==1?12:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,background:"#f9fafb",borderRadius:8,padding:12}}>
             <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Called</div><Dots count={r.from} sm/><div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cur)}</div></div>
             <div style={{fontSize:16,color:"#d1d5db",flexShrink:0}}>→</div>
             <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Corrected</div>{r.terminal?<div style={{fontSize:14,fontWeight:700,color:r.to==="BB"?green:red,padding:"4px 0"}}>{r.to}</div>:<Dots count={r.to} sm/>}<div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cor)}</div></div>
@@ -629,9 +651,42 @@ function ChallengeCard({r,persp,mode}){
             <div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Raw ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.dRE>0?green:r.dRE<0?red:"#6b7280"}}>{r.dRE>0?"+":""}{fmt(r.dRE)}</div></div>
             {r.mult!==1&&<><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>×</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Matchup</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:mpct>0?green:mpct<0?red:"#6b7280"}}>{r.mult.toFixed(2)}×</div></div><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>=</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Adj ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div></div></>}
           </div>
-          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>Challenge threshold: ΔRE ≥ 0.060</div>
+          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>Break-even confidence: {r.thresh}% · Based on Tango's challenge thresholds incorporating RE swing and option value of saving the challenge</div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ConfidenceMeter({thresh,tier,compact}){
+  // Red (left, low %, challenge-friendly) → White (center) → Blue (right, high %, hold)
+  const pct=Math.max(0,Math.min(1,(thresh-5)/90));
+  const w=compact?72:88,h=compact?44:54;
+  const cx=w/2,cy=h-4;
+  const R=compact?28:36,nLen=R-8,sw=compact?5:6;
+  const id=`m${compact?1:0}`;
+  const na=(-180+pct*180)*Math.PI/180;
+  const nx=cx+nLen*Math.cos(na),ny=cy+nLen*Math.sin(na);
+  const sx=cx+R*Math.cos(Math.PI),sy=cy+R*Math.sin(Math.PI);
+  return(
+    <div style={{textAlign:"center",flexShrink:0,width:w}}>
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+        <defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="rgb(214,48,49)"/>
+          <stop offset="30%" stopColor="rgb(235,148,147)"/>
+          <stop offset="50%" stopColor="rgb(247,247,247)"/>
+          <stop offset="70%" stopColor="rgb(146,179,214)"/>
+          <stop offset="100%" stopColor="rgb(33,102,172)"/>
+        </linearGradient></defs>
+        <path d={`M${sx},${sy}A${R},${R},0,0,1,${cx+R},${cy}`} fill="none" stroke={`url(#${id})`} strokeWidth={sw} strokeLinecap="round"/>
+        <line x1={cx+.5} y1={cy+.5} x2={nx+.5} y2={ny+.5} stroke="rgba(0,0,0,.1)" strokeWidth="2" strokeLinecap="round"/>
+        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="#1f2937" strokeWidth="1.5" strokeLinecap="round"/>
+        <circle cx={cx} cy={cy} r={compact?2:2.5} fill="#1f2937"/>
+      </svg>
+      <div style={{marginTop:compact?-2:-3,lineHeight:1}}>
+        <span style={{fontSize:compact?11:14,fontWeight:700,color:tier.color,fontVariantNumeric:"tabular-nums"}}>{thresh}%</span>
+      </div>
+      {!compact&&<div style={{fontSize:9,fontWeight:500,color:"#9ca3af",marginTop:2,lineHeight:1.2}}>{tier.sub}</div>}
     </div>
   );
 }
@@ -700,7 +755,7 @@ function Methodology(){
     <div style={{maxWidth:680}}>
       <div style={s}><div style={h}>Decision Framework</div><p style={p}>The challenge decision compares the expected RE gain from a successful challenge against the option cost of losing it for future situations. On a successful challenge, the count changes and you keep the challenge. On a failed challenge, the count stays and you lose it.</p><div style={code}>EV = P(success) × ΔRE − P(failure) × OptionCost<br/><br/>Challenge when EV {">"} 0<br/>Break-even = OptionCost / (|ΔRE| + OptionCost)</div></div>
 
-      <div style={s}><div style={h}>Why Inning & Score Don't Matter</div><p style={p}>Leverage index — how much a run matters for winning — scales all challenge opportunities equally. A high-leverage situation makes this challenge more valuable in win probability terms, but it also makes every future challenge opportunity more valuable by the same factor. The multiplier cancels out. The challenge decision reduces to: is this ΔRE big enough relative to the option value of saving the challenge for a potentially bigger ΔRE later? Only the base-out state determines that.</p></div>
+      <div style={s}><div style={h}>Challenge Thresholds (Tango, Feb 2025)</div><p style={p}>The engine uses Tom Tango's published break-even confidence thresholds for ABS challenges. For each combination of bases, outs, balls, and strikes, the table gives the minimum confidence you'd need that the call was wrong in order to justify spending a challenge. Thresholds range from 10% (loaded, 2 outs, full count — challenge on a hunch) to 88% (empty, 0 outs, 0-2 — hold unless certain).</p><div style={code}>Threshold = OptionCost / (|ΔRE| + OptionCost)<br/>CHALLENGE when your confidence ≥ threshold</div><p style={{...p,marginTop:8}}>A key insight: the threshold depends only on count and base-out state, not inning or score. Leverage index (how much a run matters) scales both the current challenge value and the option value of saving the challenge equally — so it cancels out. The decision reduces to: how big is the RE swing relative to future opportunities?</p></div>
 
       <div style={s}><div style={h}>Count-Level Run Expectancy (RE288)</div><p style={p}>288 cells across 12 counts × 8 base states × 3 out states, following the <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>RE288 framework developed by Tom Tango</a>. Values are computed recursively: the RE at each count state is derived from the transition probabilities (ball, called strike, foul, in-play) and the resulting RE of the next state, anchored to empirical RE24 values at plate appearance endpoints. This assumes the same run expectancy for an event (single, HR, etc.) regardless of count — a simplification Tango notes is reasonable given empirical evidence.</p><p style={{...p,marginTop:8}}>The matrix tab includes three views: Run Expectancy (absolute RE from each state), Run Values (marginal RE relative to the 0-0 count in each base-out state — <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>Tango's "second chart"</a>), and Count Δ (RE shift when a ball is overturned to a strike, which drives the challenge model). A key insight from the Run Values view: the 3-2 count is the only count that flips between hitter's and pitcher's count depending on base-out state.</p></div>
 
