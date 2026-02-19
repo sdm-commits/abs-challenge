@@ -517,16 +517,15 @@ export default function App(){
                         {[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:i<activeOuts?"#f59e0b":"#e5e7eb",transition:"background .15s"}}/>)}
                       </div>
                     </div>
-                    <div style={{marginLeft:"auto",textAlign:"right",paddingLeft:8}}>
-                      <div style={{display:"flex",gap:12,justifyContent:"flex-end",alignItems:"flex-end"}}>
-                        <div style={{textAlign:"center"}}>
-                          <div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Run Exp</div>
-                          <div style={{fontSize:22,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
-                        </div>
-                      </div>
-                      {analysis&&<div style={{marginTop:4,display:"flex",justifyContent:"flex-end"}}><ConfidenceMeter thresh={analysis.thresh}/></div>}
+                    <div style={{marginLeft:"auto",textAlign:"right"}}>
+                      <div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Run Exp</div>
+                      <div style={{fontSize:26,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
                     </div>
                   </div>
+                  {analysis&&<div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Challenge Threshold</div><div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>{analysis.tier.sub}</div></div>
+                    <ConfidenceNum thresh={analysis.thresh}/>
+                  </div>}
 
                   {mode==="manual"&&(<>
                     <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Count</label>
@@ -632,7 +631,7 @@ function ChallengeCard({r,persp,mode}){
           </div>
 
           {/* Confidence meter */}
-          {r.rel&&<ConfidenceMeter thresh={r.thresh}/>}
+          {r.rel&&<ConfidenceNum thresh={r.thresh}/>}
         </div>
 
         <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:10,color:"#9ca3af",fontFamily:"inherit",display:"flex",alignItems:"center",gap:3}}>
@@ -658,19 +657,15 @@ function ChallengeCard({r,persp,mode}){
   );
 }
 
-function ConfidenceMeter({thresh}){
-  // Gradient matching RE matrix: red=high(challenge), blue=low(hold), white=middle
-  const t=Math.min(Math.abs(thresh-50)/45,1);
-  const warm=thresh>=50;
-  const bg=warm
-    ?`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`
-    :`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;
-  const txt=t>0.45?"#fff":"#374151";
+function ConfidenceNum({thresh}){
+  // Deep blue (low, hold) → black (middle) → deep red (high, challenge)
+  const t=(thresh-50)/50; // -1 to +1
+  const color=t>0.05?`rgb(${Math.round(140+(214-140)*Math.min(t*1.5,1))},${Math.round(40*Math.max(0,1-t*2))},${Math.round(40*Math.max(0,1-t*2))})`
+    :t<-0.05?`rgb(${Math.round(30*Math.max(0,1+t*2))},${Math.round(50+52*Math.min(-t*1.5,1))},${Math.round(100+72*Math.min(-t*1.5,1))})`
+    :"#1f2937";
   return(
-    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",flexShrink:0}}>
-      <div style={{padding:"6px 12px",borderRadius:8,background:bg,border:t<0.15?"1px solid #e5e7eb":"none"}}>
-        <div style={{fontSize:16,fontWeight:700,color:txt,fontVariantNumeric:"tabular-nums",letterSpacing:-.3,lineHeight:1,textAlign:"center"}}>{thresh}%</div>
-      </div>
+    <div style={{textAlign:"center",flexShrink:0}}>
+      <div style={{fontSize:22,fontWeight:700,color,fontVariantNumeric:"tabular-nums",letterSpacing:-.5,lineHeight:1}}>{thresh}%</div>
       <div style={{fontSize:8,fontWeight:500,color:"#9ca3af",marginTop:3,letterSpacing:.1}}>confidence needed</div>
     </div>
   );
