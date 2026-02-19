@@ -659,19 +659,19 @@ function ChallengeCard({r,persp,mode}){
 }
 
 function ConfidenceMeter({thresh}){
-  // Gradient cell like RE matrix. Red=high(challenge-friendly), Blue=low(hold), White=middle
+  // Gradient matching RE matrix: red=high(challenge), blue=low(hold), white=middle
   const t=Math.min(Math.abs(thresh-50)/45,1);
   const warm=thresh>=50;
   const bg=warm
     ?`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`
     :`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;
-  const txt=t>0.5?"#fff":"#1f2937";
+  const txt=t>0.45?"#fff":"#374151";
   return(
-    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",gap:2,flexShrink:0}}>
-      <div style={{width:52,height:36,borderRadius:10,background:bg,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,.06)"}}>
-        <span style={{fontSize:15,fontWeight:700,color:txt,fontVariantNumeric:"tabular-nums",letterSpacing:-.3}}>{thresh}%</span>
+    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",flexShrink:0}}>
+      <div style={{padding:"6px 12px",borderRadius:8,background:bg,border:t<0.15?"1px solid #e5e7eb":"none"}}>
+        <div style={{fontSize:16,fontWeight:700,color:txt,fontVariantNumeric:"tabular-nums",letterSpacing:-.3,lineHeight:1,textAlign:"center"}}>{thresh}%</div>
       </div>
-      <span style={{fontSize:8,fontWeight:500,color:"#9ca3af",letterSpacing:.3}}>confidence</span>
+      <div style={{fontSize:8,fontWeight:500,color:"#9ca3af",marginTop:3,letterSpacing:.1}}>confidence needed</div>
     </div>
   );
 }
