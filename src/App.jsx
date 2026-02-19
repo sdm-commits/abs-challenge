@@ -474,11 +474,11 @@ export default function App(){
                           const bBord=bEdge?"#16a34a":pEdge?"#dc2626":"#9ca3af";
                           const pBord=pEdge?"#16a34a":bEdge?"#dc2626":"#9ca3af";
                           return <div style={{display:"flex",gap:8,marginBottom:6}}>
-                          <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#dbeafe",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${bBord}`}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#f3f4f6",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${bBord}`}}>
                             <img src={`${HEADSHOT}${demoPlay.batterId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
                             <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>AB</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(demoPlay.batter)}</div>{bSt?.ops!=null&&<div style={{fontSize:9,color:bBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{bSt.ops.toFixed(3)} OPS</div>}</div>
                           </div>
-                          <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#dbeafe",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${pBord}`}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#f3f4f6",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${pBord}`}}>
                             <img src={`${HEADSHOT}${demoPlay.pitcherId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
                             <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>P</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(demoPlay.pitcher)}</div>{pSt?.ops!=null&&<div style={{fontSize:9,color:pBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{pSt.ops.toFixed(3)} OPA</div>}</div>
                           </div>
