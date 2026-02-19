@@ -294,14 +294,12 @@ export default function App(){
         cor=RE[o]?.[b]?.[t.to];if(cor===undefined)return null;
       }
       const dRE=cor-cur;
-      const adjRE=dRE*matchup.mult; // matchup-adjusted ΔRE
+      const adjRE=dRE*matchup.mult;
       const pD=persp==="offense"?adjRE:-adjRE;
-      const rem=Math.max(9-activeInn,0),ov=(chLeft>1?.015:.035)*rem*.1;
-      const be=Math.abs(adjRE)>0?Math.max((ov/(Math.abs(adjRE)+ov))*100,1):100;
-      const ev=(conf/100)*pD-((100-conf)/100)*ov;
-      return{...t,cur,cor,dRE,adjRE,pD,ov,be,ev,go:conf>=be&&pD>0,rel:pD>0,mult:matchup.mult};
+      const go=Math.abs(adjRE)>=0.06;
+      return{...t,cur,cor,dRE,adjRE,pD,go,rel:pD>0,mult:matchup.mult};
     }).filter(Boolean)};
-  },[activeCount,activeOuts,activeBs,activeInn,conf,persp,chLeft,matchup]);
+  },[activeCount,activeOuts,activeBs,activeInn,persp,matchup]);
 
   const toggleBase=useCallback(i=>setBs(p=>{const a=p.split("");a[i]=a[i]==="1"?"0":"1";return a.join("")}),[]);
   const seg=(active)=>({padding:"6px 0",flex:1,borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",textAlign:"center",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"});
@@ -555,14 +553,6 @@ export default function App(){
                   )}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
                     <div><label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Perspective</label><div style={{display:"flex",gap:3}}>{[["offense","Batting"],["defense","Pitching"]].map(([p,l])=><button key={p} onClick={()=>setPersp(p)} style={{...seg(persp===p),fontSize:11}}>{l}</button>)}</div></div>
-                    <div><label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Challenges</label><div style={{display:"flex",gap:3}}>{[1,2].map(c=><button key={c} onClick={()=>setChLeft(c)} style={seg(chLeft===c)}>{c}</button>)}</div></div>
-                  </div>
-                  <div>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-                      <label style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Confidence</label>
-                      <span style={{fontSize:17,fontWeight:700,color:"#111827",fontVariantNumeric:"tabular-nums"}}>{conf}%</span>
-                    </div>
-                    <input type="range" min={5} max={99} value={conf} onChange={e=>setConf(+e.target.value)} style={{width:"100%",cursor:"pointer"}}/>
                   </div>
                 </div>
               </div>
@@ -577,7 +567,7 @@ export default function App(){
                   Challenges worth {mpct>0?"+":""}{mpct.toFixed(0)}% this AB
                 </div>;
               })()}
-              {analysis?.results?.map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} conf={conf} persp={persp} mode={mode}/>)}
+              {analysis?.results?.map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} persp={persp} mode={mode}/>)}
               {(!analysis||analysis.results.length===0)&&(
                 <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:32,textAlign:"center",color:"#9ca3af",fontSize:13}}>
                   {mode==="live"&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
@@ -597,9 +587,8 @@ export default function App(){
 // ============================================================
 // CHALLENGE CARD
 // ============================================================
-function ChallengeCard({r,conf,persp,mode}){
+function ChallengeCard({r,persp,mode}){
   const[open,setOpen]=useState(false);
-  const[showAdj,setShowAdj]=useState(false);
   const green="#16a34a",red="#dc2626";
   const mpct=r.mult!==1?((r.mult-1)*100):0;
 
@@ -632,20 +621,15 @@ function ChallengeCard({r,conf,persp,mode}){
       {/* Expanded math details */}
       {open&&(
         <div style={{borderTop:"1px solid #f3f4f6",padding:"12px 14px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,background:"#f9fafb",borderRadius:8,padding:12,marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,background:"#f9fafb",borderRadius:8,padding:12,marginBottom:r.mult!==1?12:0}}>
             <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Called</div><Dots count={r.from} sm/><div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cur)}</div></div>
             <div style={{fontSize:16,color:"#d1d5db",flexShrink:0}}>→</div>
             <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Corrected</div>{r.terminal?<div style={{fontSize:14,fontWeight:700,color:r.to==="BB"?green:red,padding:"4px 0"}}>{r.to}</div>:<Dots count={r.to} sm/>}<div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cor)}</div></div>
             <div style={{flex:1}}/>
-            <div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>{r.mult!==1?"Adj ΔRE":"ΔRE"}</div><div style={{fontSize:22,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div></div>
+            <div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Raw ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.dRE>0?green:r.dRE<0?red:"#6b7280"}}>{r.dRE>0?"+":""}{fmt(r.dRE)}</div></div>
+            {r.mult!==1&&<><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>×</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Matchup</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:mpct>0?green:mpct<0?red:"#6b7280"}}>{r.mult.toFixed(2)}×</div></div><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>=</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Adj ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div></div></>}
           </div>
-          {r.rel&&(
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-              {[["Break-Even",r.be.toFixed(1)+"%",null],["Margin",(conf-r.be>0?"+":"")+(conf-r.be).toFixed(1)+"%",conf>=r.be?green:red],["Exp. Value",(r.ev>0?"+":"")+r.ev.toFixed(4),r.ev>0?green:red],["Option Cost",r.ov.toFixed(4),null],["Your Conf.",conf+"%",null],r.mult!==1?(()=>{const mcol2=mpct>0?green:mpct<0?red:"#6b7280";return[showAdj?"Adj ΔRE":"Matchup",showAdj?(r.pD>0?"+":"")+r.pD.toFixed(3):(mpct>0?"+":"")+mpct.toFixed(0)+"%",mcol2]})():["Raw ΔRE",(r.dRE>0?"+":"")+r.dRE.toFixed(3),null]].map(([label,val,clr],idx)=>(
-                <div key={idx} onClick={()=>{if(idx===5&&r.mult!==1)setShowAdj(s=>!s)}} style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",cursor:idx===5&&r.mult!==1?"pointer":"default"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"flex",alignItems:"center",gap:3}}>{label}{idx===5&&r.mult!==1&&<span style={{fontSize:7,opacity:.6}}>▸</span>}</div><div style={{fontSize:14,fontWeight:600,color:clr||"#374151",fontVariantNumeric:"tabular-nums",marginTop:1}}>{val}</div></div>
-              ))}
-            </div>
-          )}
+          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>Challenge threshold: ΔRE ≥ 0.060</div>
         </div>
       )}
     </div>
