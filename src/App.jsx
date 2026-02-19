@@ -524,7 +524,7 @@ export default function App(){
                           <div style={{fontSize:22,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
                         </div>
                       </div>
-                      {analysis&&<div style={{marginTop:4,display:"flex",justifyContent:"flex-end"}}><ConfidenceMeter thresh={analysis.thresh} tier={analysis.tier} compact/></div>}
+                      {analysis&&<div style={{marginTop:4,display:"flex",justifyContent:"flex-end"}}><ConfidenceMeter thresh={analysis.thresh}/></div>}
                     </div>
                   </div>
 
@@ -632,7 +632,7 @@ function ChallengeCard({r,persp,mode}){
           </div>
 
           {/* Confidence meter */}
-          {r.rel&&<ConfidenceMeter thresh={r.thresh} tier={tier}/>}
+          {r.rel&&<ConfidenceMeter thresh={r.thresh}/>}
         </div>
 
         <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:10,color:"#9ca3af",fontFamily:"inherit",display:"flex",alignItems:"center",gap:3}}>
@@ -658,37 +658,20 @@ function ChallengeCard({r,persp,mode}){
   );
 }
 
-function ConfidenceMeter({thresh,tier,compact}){
-  // LEFT=BLUE (hold, high bar) → WHITE → RIGHT=RED (challenge, low bar)
-  // Needle: low threshold → right (red), high threshold → left (blue)
-  const pct=Math.max(0,Math.min(1,(thresh-5)/90));
-  const inv=1-pct; // invert so low thresh → right
-  const w=compact?72:88,h=compact?44:54;
-  const cx=w/2,cy=h-4;
-  const R=compact?28:36,nLen=R-8,sw=compact?5:6;
-  const id=`m${compact?1:0}`;
-  const na=(-180+inv*180)*Math.PI/180;
-  const nx=cx+nLen*Math.cos(na),ny=cy+nLen*Math.sin(na);
-  const sx=cx+R*Math.cos(Math.PI),sy=cy+R*Math.sin(Math.PI);
+function ConfidenceMeter({thresh}){
+  // Gradient cell like RE matrix. Red=high(challenge-friendly), Blue=low(hold), White=middle
+  const t=Math.min(Math.abs(thresh-50)/45,1);
+  const warm=thresh>=50;
+  const bg=warm
+    ?`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`
+    :`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;
+  const txt=t>0.5?"#fff":"#1f2937";
   return(
-    <div style={{textAlign:"center",flexShrink:0,width:w}}>
-      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
-        <defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="rgb(33,102,172)"/>
-          <stop offset="30%" stopColor="rgb(146,179,214)"/>
-          <stop offset="50%" stopColor="rgb(247,247,247)"/>
-          <stop offset="70%" stopColor="rgb(235,148,147)"/>
-          <stop offset="100%" stopColor="rgb(214,48,49)"/>
-        </linearGradient></defs>
-        <path d={`M${sx},${sy}A${R},${R},0,0,1,${cx+R},${cy}`} fill="none" stroke={`url(#${id})`} strokeWidth={sw} strokeLinecap="round"/>
-        <line x1={cx+.5} y1={cy+.5} x2={nx+.5} y2={ny+.5} stroke="rgba(0,0,0,.1)" strokeWidth="2" strokeLinecap="round"/>
-        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="#1f2937" strokeWidth="1.5" strokeLinecap="round"/>
-        <circle cx={cx} cy={cy} r={compact?2:2.5} fill="#1f2937"/>
-      </svg>
-      <div style={{marginTop:compact?-2:-3,lineHeight:1}}>
-        <span style={{fontSize:compact?11:14,fontWeight:700,color:tier.color,fontVariantNumeric:"tabular-nums"}}>{thresh}%</span>
+    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",gap:2,flexShrink:0}}>
+      <div style={{width:52,height:36,borderRadius:10,background:bg,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,.06)"}}>
+        <span style={{fontSize:15,fontWeight:700,color:txt,fontVariantNumeric:"tabular-nums",letterSpacing:-.3}}>{thresh}%</span>
       </div>
-      {!compact&&<div style={{fontSize:9,fontWeight:500,color:"#9ca3af",marginTop:2,lineHeight:1.2}}>{tier.sub}</div>}
+      <span style={{fontSize:8,fontWeight:500,color:"#9ca3af",letterSpacing:.3}}>confidence</span>
     </div>
   );
 }
