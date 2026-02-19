@@ -24,7 +24,7 @@ Leverage index — how much a run matters for winning — scales all challenge o
 
 **Simulator** — Set count, outs, base runners, inning, perspective (batting/fielding), and challenge inventory. Adjust your confidence estimate and get real-time CHALLENGE/HOLD verdicts with full EV breakdowns. Math details are always visible on desktop; collapsible on mobile.
 
-**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score. Falls back to the manual calculator when no games are in progress.
+**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score. On game selection, preloads regular-season stats for both rosters and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter's OPS and pitcher's OPS-against relative to league average. Falls back to the manual calculator when no games are in progress.
 
 **Terminal Transitions** — Models strikeouts and walks as full base-out state changes, not just count changes. Overturning a ball on a 3-2 count produces a strikeout (outs +1, runners stay); overturning a strike on 3-2 produces a walk (batter to 1st, forced runners advance, bases-loaded walk scores a run). All x-2 and 3-x counts handle terminal outcomes correctly.
 
@@ -57,7 +57,6 @@ Break-even = OptionCost / (|adjustedΔRE| + OptionCost)
 
 - Matchup adjustment uses full-season OPS, not platoon splits or recent form
 - Option value uses linear scaling rather than Monte Carlo simulation
-- Challenge success probability is manual input; production would use Hawk-Eye pitch location data relative to the ABS zone boundary
   
 ## Quick Start
 
