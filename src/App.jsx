@@ -522,7 +522,7 @@ export default function App(){
                       <div style={{fontSize:26,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
                     </div>
                   </div>
-                  {analysis&&<div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"flex-end",justifyContent:"space-between"}}>
+                  {analysis&&<div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                     <div style={{fontSize:11,color:"#9ca3af"}}>{analysis.tier.sub}</div>
                     <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Conf Needed</div><ConfidenceNum thresh={analysis.thresh}/></div>
                   </div>}
@@ -658,11 +658,13 @@ function ChallengeCard({r,persp,mode}){
 }
 
 function ConfidenceNum({thresh}){
-  // Deep blue (low, hold) → black (middle) → deep red (high, challenge)
-  const t=(thresh-50)/50; // -1 to +1
-  const color=t>0.05?`rgb(${Math.round(140+(214-140)*Math.min(t*1.5,1))},${Math.round(40*Math.max(0,1-t*2))},${Math.round(40*Math.max(0,1-t*2))})`
-    :t<-0.05?`rgb(${Math.round(30*Math.max(0,1+t*2))},${Math.round(50+52*Math.min(-t*1.5,1))},${Math.round(100+72*Math.min(-t*1.5,1))})`
-    :"#1f2937";
+  // Same palette as RE matrix: rgb(214,48,49) red, rgb(33,102,172) blue
+  const t=Math.min(Math.abs(thresh-50)/40,1);
+  const warm=thresh>52;
+  const cool=thresh<48;
+  const color=warm?`rgb(${Math.round(55+(214-55)*t)},${Math.round(65-(65-48)*t)},${Math.round(81-(81-49)*t)})`
+    :cool?`rgb(${Math.round(55-(55-33)*t)},${Math.round(65+(102-65)*t)},${Math.round(81+(172-81)*t)})`
+    :"#374151";
   return(
     <div style={{textAlign:"center",flexShrink:0}}>
       <div style={{fontSize:22,fontWeight:700,color,fontVariantNumeric:"tabular-nums",letterSpacing:-.5,lineHeight:1}}>{thresh}%</div>
