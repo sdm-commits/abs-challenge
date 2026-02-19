@@ -766,8 +766,8 @@ function ThresholdMatrix(){
       <div className="mx-controls" style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Outs</span><div style={{display:"flex",gap:3}}>{[0,1,2].map(o=><button key={o} onClick={()=>setTOuts(o)} style={seg(tOuts===o)}>{o}</button>)}</div></div>
         <div style={{flex:1}}/>
-        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>Hold</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
-          <span>Challenge</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>Challenge</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
+          <span>Hold</span></div>
       </div>
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -789,7 +789,7 @@ function ThresholdMatrix(){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Minimum confidence needed to justify a challenge (Tango, Feb 2025). Red = low bar, challenge-friendly — even a small hunch is enough. Blue = high bar, hold unless certain. Thresholds account for both the RE swing and the option value of saving the challenge for later.</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Minimum confidence needed to justify a challenge (Tango, Feb 2025). Blue = low bar, challenge-friendly — even a small hunch is enough. Red = high bar, hold unless certain. Thresholds account for both the RE swing and the option value of saving the challenge for later.</p>
     </div>
   );
 }
