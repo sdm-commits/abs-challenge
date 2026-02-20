@@ -33,6 +33,8 @@ function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 // MLB API HOOKS
 // ============================================================
 const API="https://statsapi.mlb.com/api/v1";
+const TEAM_ABBR={109:"ARI",110:"BAL",111:"BOS",112:"CHC",113:"CIN",114:"CLE",115:"COL",116:"DET",117:"HOU",118:"KC",119:"LAD",120:"WSH",121:"NYM",133:"OAK",134:"PIT",135:"SD",136:"SEA",137:"SF",138:"STL",139:"TB",140:"TEX",141:"TOR",142:"MIN",143:"PHI",144:"ATL",145:"CWS",146:"MIA",147:"NYY",158:"MIL",160:"LAA"};
+const teamAbbr=(t)=>TEAM_ABBR[t?.id]||t?.abbreviation||t?.name||"?";
 let LG_XWOBA=0.315; // default, overridden by xwoba.json if available
 
 // Tango's ABS Challenge Thresholds (Feb 2025)
@@ -308,8 +310,8 @@ export default function App(){
   const scheduledGames=games.filter(g=>g.status?.abstractGameState==="Preview");
   const finalGames=games.filter(g=>g.status?.abstractGameState==="Final");
   const selGameData=selectedGame&&games.find(g=>g.gamePk===selectedGame);
-  const awayAbbr=selGameData?.teams?.away?.team?.abbreviation||"";
-  const homeAbbr=selGameData?.teams?.home?.team?.abbreviation||"";
+  const awayAbbr=selGameData?teamAbbr(selGameData.teams?.away?.team):"";
+  const homeAbbr=selGameData?teamAbbr(selGameData.teams?.home?.team):"";
 
   const analysis=useMemo(()=>{
     const c=activeCount,o=activeOuts,b=activeBs;
@@ -417,7 +419,7 @@ export default function App(){
                               }}>
                                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                                   <div style={{fontSize:12,fontWeight:600}}>
-                                    {away?.team?.abbreviation||"AWY"} {ls?.teams?.away?.runs??"-"} @ {home?.team?.abbreviation||"HME"} {ls?.teams?.home?.runs??"-"}
+                                    {teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"} @ {teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}
                                   </div>
                                   <div style={{display:"flex",alignItems:"center",gap:4}}>
                                     <div style={{width:6,height:6,borderRadius:"50%",background:sel?"#22c55e":"#22c55e",animation:"pulse 1.5s infinite"}}/>
