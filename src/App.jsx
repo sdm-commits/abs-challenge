@@ -266,6 +266,7 @@ export default function App(){
   const[persp,setPersp]=useState("offense");
   // Live game state
   const[selectedGame,setSelectedGame]=useState(null);
+  const[selectedGameInfo,setSelectedGameInfo]=useState(null);
   const[mode,setMode]=useState("manual"); // "manual" | "live" | "demo"
   const[demoIdx,setDemoIdx]=useState(0);
   const demoPlay=DEMO_PLAYS[demoIdx]||DEMO_PLAYS[0];
@@ -407,7 +408,7 @@ export default function App(){
                             const sel=selectedGame===g.gamePk;
                             const ls=g.linescore;
                             return(
-                              <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} style={{
+                              <button key={g.gamePk} onClick={()=>{setSelectedGame(g.gamePk);setSelectedGameInfo({awayAbbr:away?.team?.abbreviation||"AWY",homeAbbr:home?.team?.abbreviation||"HME"});}} style={{
                                 padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",textAlign:"left",
                                 background:sel?"#111827":"#f3f4f6",color:sel?"#fff":"#374151",
                                 transition:"all .15s",fontFamily:"inherit",
@@ -576,7 +577,7 @@ export default function App(){
                   {mode==="live"&&liveState&&(
                     <div style={{display:"flex",gap:12,marginBottom:10,fontSize:12,color:"#6b7280"}}>
                       <span>{liveState.isTop?"Top":"Bot"} {liveState.inn}</span>
-                      <span>Score: {liveState.away}–{liveState.home}</span>
+                      <span>Score: {selectedGameInfo?.awayAbbr||"AWY"} {liveState.away}–{selectedGameInfo?.homeAbbr||"HME"} {liveState.home}</span>
                     </div>
                   )}
                   {mode==="demo"&&(
