@@ -2,62 +2,82 @@
 
 A decision-support tool for optimizing ball-strike challenge decisions under MLB's Automated Ball-Strike (ABS) system. Built for front office analysts and dugout strategy staff.
 
-**[Live Demo →](https://abs-challenge.vercel.app/)**
+**[Live App →](https://abs-challenge.vercel.app/)**
 
 ## What It Does
 
-When a pitch is called, a manager has seconds to decide: challenge or hold? This tool quantifies that decision using count-level run expectancy.
+When a pitch is called, the batter, catcher, or pitcher has seconds to decide: challenge or hold? This tool quantifies that decision using count-level run expectancy and [Tom Tango's break-even confidence thresholds](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge).
 
 The core model:
 
 ```
-EV(challenge) = P(success) × ΔRE − P(failure) × OptionCost
+benefit = |ΔRE| of flipping the call
+cost    = ~0.20 runs (empirical, from 2025 AAA challenge data)
+
+Break-even = cost / (benefit + cost)
+CHALLENGE when your confidence ≥ break-even
 ```
 
-It computes the break-even confidence threshold for every valid challenge transition (ball→strike, strike→ball) given the current base-out state, then recommends **CHALLENGE** or **HOLD** based on the user's estimated probability of success.
+Thresholds range from **10%** (bases loaded, 2 outs, full count — challenge on a hunch) to **88%** (bases empty, 0 outs, 0-2 count — hold unless certain).
 
 ## Why Inning & Score Don't Matter
 
-Leverage index — how much a run matters for winning — scales all challenge opportunities equally. A high-leverage situation makes this challenge more valuable in win probability terms, but it also makes every future challenge opportunity more valuable by the same factor. The multiplier cancels out. The challenge decision reduces to: is this ΔRE big enough relative to the option value of saving the challenge for a potentially bigger ΔRE later? Only the base-out state determines that.
+Per [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge), the average value of an overturned call is ~0.20 runs — and this holds remarkably flat across innings and challenge inventory (1 vs 2 remaining). Because the cost stays constant, leverage index scales both sides of the equation equally and cancels out. The challenge decision reduces to: how big is the ΔRE of this specific count flip relative to the fixed ~0.20 run cost?
 
 ## Features
 
-**Simulator** — Set count, outs, base runners, inning, perspective (batting/fielding), and challenge inventory. Adjust your confidence estimate and get real-time CHALLENGE/HOLD verdicts with full EV breakdowns. Math details are always visible on desktop; collapsible on mobile.
+**Simulator** — Set count, outs, base runners, and perspective (batting/pitching). See the break-even confidence threshold, run expectancy, and challenge recommendation for every valid transition.
 
-**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score. On game selection, preloads regular-season stats for both rosters and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter's OPS and pitcher's OPS-against relative to league average. Falls back to the manual calculator when no games are in progress.
+**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score with team abbreviations. Schedule refreshes every 30 seconds to keep all game buttons current. On game selection, preloads season xwOBA for both rosters via a [Vercel serverless endpoint](#xwoba-api) and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter-pitcher pairing relative to league average.
 
-**Terminal Transitions** — Models strikeouts and walks as full base-out state changes, not just count changes. Overturning a ball on a 3-2 count produces a strikeout (outs +1, runners stay); overturning a strike on 3-2 produces a walk (batter to 1st, forced runners advance, bases-loaded walk scores a run). All x-2 and 3-x counts handle terminal outcomes correctly.
+**World Series Game 7 Demo** — Walk through 10 pivotal at-bats from the hypothetical LAD-TOR Game 7 with real 2025 Statcast xwOBA data, showing how challenge decisions would have played out under ABS.
+
+**Terminal Transitions** — Models strikeouts and walks as full base-out state changes, not just count changes. Overturning a ball on an x-2 count produces a strikeout (outs +1, runners stay). Overturning a strike on a 3-x count produces a walk (batter to 1st, forced runners advance, bases-loaded walk scores a run).
 
 **RE288 Matrix** — Interactive heatmap of all 288 run expectancy states (12 counts × 8 base states × 3 out states) with three views:
 - **Run Expectancy** — Absolute expected runs from each state through end of half-inning
 - **Run Values** — Marginal runs relative to the 0-0 count in each base-out state ([Tango's "second chart"](https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu))
 - **Count Δ** — RE shift when a ball is overturned to a strike, including terminal strikeout deltas for x-2 counts
 
-**Methodology** — Full documentation of the decision framework, data sources, simplifying assumptions, and production extensions.
+**Threshold Matrix** — Full heatmap of Tango's break-even confidence thresholds across all count × base-out states. Blue = low bar (challenge-friendly), red = high bar (hold unless certain).
+
+**Methodology** — Full documentation of the decision framework, data sources, Tango's cost/benefit analysis, matchup adjustment math, and known limitations.
 
 ## The Model
 
-The decision framework weighs three factors:
-
 | Factor | Description |
 |---|---|
-| **ΔRE** | Run expectancy difference between the called count and corrected count (including terminal K/BB state changes) |
-| **Matchup** | OPS-based multiplier scaling ΔRE for the current batter-pitcher pairing vs. league average (live mode only) |
-| **Option Value** | Opportunity cost of expending a challenge (scales with remaining innings and inventory) |
+| **ΔRE** | Run expectancy difference between the called count and corrected count, including terminal K/BB state changes |
+| **Challenge Cost** | ~0.20 runs — empirical average from 2025 AAA data, flat across innings and inventory ([Tango, Feb 2025](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge)) |
+| **Matchup Multiplier** | xwOBA-based scaling of ΔRE for the current batter-pitcher pairing vs. league average (live and demo modes) |
 | **Confidence** | User's estimate of challenge success probability |
 
-A challenge is recommended when the expected value is positive and confidence exceeds the break-even threshold:
-
 ```
-adjustedΔRE = ΔRE × (batterOPS/lgOPS) × (pitcherOPSagainst/lgOPS)
-Break-even = OptionCost / (|adjustedΔRE| + OptionCost)
+batterFactor  = batterXwOBA / leagueXwOBA
+pitcherFactor = pitcherXwOBA_against / leagueXwOBA
+matchupMultiplier = batterFactor × pitcherFactor    (clamped to [0.5, 2.0])
+adjustedΔRE = ΔRE × matchupMultiplier
+
+Break-even = 0.20 / (|adjustedΔRE| + 0.20)
 ```
 
-### Known Limitations (documented in-app)
+A league-average matchup produces a multiplier of ~1.0×. An elite hitter facing a weak pitcher pushes ×1.3+, lowering the break-even threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar.
 
-- Matchup adjustment uses full-season OPS, not platoon splits or recent form
-- Option value uses linear scaling rather than Monte Carlo simulation
-  
+## xwOBA API
+
+The app includes a Vercel serverless function (`/api/xwoba`) that fetches season xwOBA data from Baseball Savant for all qualified batters and pitchers:
+
+- Fetches batter + pitcher CSVs from `baseballsavant.mlb.com` in parallel
+- Parses and returns JSON: `{ season, updated, lg_xwoba, players: { [id]: { name, xwoba, pa, type } } }`
+- In-memory cache with 12-hour TTL; serves stale cache if Savant is down
+- Falls back to a statsapi OPS→xwOBA conversion formula for players missing from Savant data
+
+### Known Limitations
+
+- xwOBA uses full-season Statcast data — doesn't capture platoon splits, recent form, or pitch-type matchup edges
+- Challenge confidence is manual input; production would use Hawk-Eye pitch location data to estimate success probability automatically
+- Schedule polling (30s) means non-selected game buttons can lag slightly behind real-time
+
 ## Quick Start
 
 ```bash
@@ -67,11 +87,11 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` to run locally.
+Open `http://localhost:5173` to run locally. Live game mode and the xwOBA API work in local dev via Vite's proxy.
 
 ## Deploy
 
-Connect this repo to [Vercel](https://vercel.com) — it auto-detects Vite and deploys with zero configuration. Or manually:
+Connect this repo to [Vercel](https://vercel.com) — it auto-detects Vite and deploys with zero configuration. The `/api/xwoba` serverless function deploys automatically.
 
 ```bash
 npm run build
@@ -80,18 +100,24 @@ npx vercel --prod
 
 ## Tech
 
-Single-file React application (~500 lines). No external dependencies beyond React itself.
+Single-file React application (~830 lines in `src/App.jsx`). No external dependencies beyond React.
 
 - React hooks for state management (`useState`, `useMemo`, `useEffect`, `useRef`)
-- MLB Stats API for live game data (`statsapi.mlb.com/api/v1`)
+- [MLB Stats API](https://statsapi.mlb.com/api/v1) for live game data and player stats
+- [Baseball Savant](https://baseballsavant.mlb.com) for season xwOBA (via serverless API)
+- Vercel serverless function for xwOBA data (`api/xwoba.js`)
 - CSS-in-JS (inline styles, no build dependencies)
-- Responsive: math details always visible on desktop, collapsible on mobile
+- Responsive layout with collapsible math details on mobile
 
 ## Data Attribution
 
-RE288 values derived from [Tom Tango's recursive run expectancy model](https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu), computed using 2010–2015 Retrosheet play-by-play data. The RE288 framework and the concept of count-level run values are one of Tango's many contributions to modern sabermetrics.
+RE288 values derived from [Tom Tango's recursive run expectancy model](https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu), computed using 2010–2015 Retrosheet play-by-play data.
+
+Challenge thresholds from [Tango's cost/benefit analysis of ABS challenges](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge) (Feb 2025), validated against 2025 AAA challenge data.
 
 Methodology follows Tango, Lichtman & Dolphin, [*The Book: Playing the Percentages in Baseball*](https://www.amazon.com/Book-Playing-Percentages-Baseball/dp/1597971294).
+
+xwOBA data from [Baseball Savant](https://baseballsavant.mlb.com) (Statcast expected weighted on-base average).
 
 Live game data from the [MLB Stats API](https://statsapi.mlb.com). Use of MLB data is subject to the [MLB copyright notice](http://gdx.mlb.com/components/copyright.txt).
 
