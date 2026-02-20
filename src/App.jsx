@@ -147,7 +147,7 @@ function useTodaysGames(){
   const[loading,setLoading]=useState(true);
   const[error,setError]=useState(null);
   useEffect(()=>{
-    let cancelled=false;
+    let cancelled=false,tid;
     async function load(){
       try{
         const today=new Date().toISOString().split("T")[0];
@@ -157,10 +157,10 @@ function useTodaysGames(){
         const allGames=(data.dates||[]).flatMap(d=>d.games||[]);
         if(!cancelled)setGames(allGames);
       }catch(e){if(!cancelled)setError(e.message)}
-      finally{if(!cancelled)setLoading(false)}
+      finally{if(!cancelled){setLoading(false);tid=setTimeout(load,30000);}}
     }
     load();
-    return()=>{cancelled=true};
+    return()=>{cancelled=true;clearTimeout(tid)};
   },[]);
   return{games,loading,error};
 }
@@ -422,7 +422,7 @@ export default function App(){
                                     {teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"} @ {teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}
                                   </div>
                                   <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                    <div style={{width:6,height:6,borderRadius:"50%",background:sel?"#22c55e":"#22c55e",animation:"pulse 1.5s infinite"}}/>
+                                    <div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",animation:"pulse 1.5s infinite"}}/>
                                     <span style={{fontSize:10,color:sel?"rgba(255,255,255,.6)":"#9ca3af"}}>
                                       {ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}
                                     </span>
