@@ -266,7 +266,6 @@ export default function App(){
   const[persp,setPersp]=useState("offense");
   // Live game state
   const[selectedGame,setSelectedGame]=useState(null);
-  const[selectedGameInfo,setSelectedGameInfo]=useState(null);
   const[mode,setMode]=useState("manual"); // "manual" | "live" | "demo"
   const[demoIdx,setDemoIdx]=useState(0);
   const demoPlay=DEMO_PLAYS[demoIdx]||DEMO_PLAYS[0];
@@ -308,6 +307,9 @@ export default function App(){
   const liveGames=games.filter(g=>g.status?.abstractGameState==="Live");
   const scheduledGames=games.filter(g=>g.status?.abstractGameState==="Preview");
   const finalGames=games.filter(g=>g.status?.abstractGameState==="Final");
+  const selGameData=selectedGame&&games.find(g=>g.gamePk===selectedGame);
+  const awayAbbr=selGameData?.teams?.away?.team?.abbreviation||"";
+  const homeAbbr=selGameData?.teams?.home?.team?.abbreviation||"";
 
   const analysis=useMemo(()=>{
     const c=activeCount,o=activeOuts,b=activeBs;
@@ -408,7 +410,7 @@ export default function App(){
                             const sel=selectedGame===g.gamePk;
                             const ls=g.linescore;
                             return(
-                              <button key={g.gamePk} onClick={()=>{setSelectedGame(g.gamePk);setSelectedGameInfo({awayAbbr:away?.team?.abbreviation||"AWY",homeAbbr:home?.team?.abbreviation||"HME"});}} style={{
+                              <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} style={{
                                 padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",textAlign:"left",
                                 background:sel?"#111827":"#f3f4f6",color:sel?"#fff":"#374151",
                                 transition:"all .15s",fontFamily:"inherit",
@@ -577,7 +579,7 @@ export default function App(){
                   {mode==="live"&&liveState&&(
                     <div style={{display:"flex",gap:12,marginBottom:10,fontSize:12,color:"#6b7280"}}>
                       <span>{liveState.isTop?"Top":"Bot"} {liveState.inn}</span>
-                      <span>Score: {selectedGameInfo?.awayAbbr||"AWY"} {liveState.away}–{selectedGameInfo?.homeAbbr||"HME"} {liveState.home}</span>
+                      <span>{awayAbbr} {liveState.away} – {homeAbbr} {liveState.home}</span>
                     </div>
                   )}
                   {mode==="demo"&&(
