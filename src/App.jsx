@@ -44,6 +44,98 @@ const TANGO={"000":{0:[[73,60,50,46],[80,70,60,56],[88,82,76,73]],1:[[71,64,51,3
 const getTangoThresh=(bases,outs,balls,strikes)=>TANGO[bases]?.[outs]?.[strikes]?.[balls]??50;
 const getTier=(thresh)=>thresh<=25?{label:"Challenge",sub:"Even a hunch is enough",color:"#2563eb",bg:"#f9fafb",border:"#bfdbfe"}:thresh<=45?{label:"Lean challenge",sub:"Worth it if it looked wrong",color:"#16a34a",bg:"#f9fafb",border:"#bbf7d0"}:thresh<=65?{label:"Toss-up",sub:"Only if you saw it clearly",color:"#d97706",bg:"#fffbeb",border:"#fde68a"}:thresh<=80?{label:"Lean hold",sub:"Need to be pretty sure",color:"#ea580c",bg:"#fff7ed",border:"#fed7aa"}:{label:"Hold",sub:"Only challenge if certain",color:"#dc2626",bg:"#fef2f2",border:"#fecaca"};
 
+// ============================================================
+// CHALLENGE CONTEXT — tug of war + both transitions
+// ============================================================
+function ChallengeContext({analysis,activeCount,persp}){
+  const[showTip,setShowTip]=useState(false);
+  if(!analysis||!activeCount)return null;
+  const[balls,strikes]=activeCount.split("-").map(Number);
+
+  // Find batter (s2b) and catcher (b2s) transitions
+  const batterCard=analysis.results.find(r=>r.type==="s2b");
+  const catcherCard=analysis.results.find(r=>r.type==="b2s");
+
+  // If neither exists (0-0), don't render
+  if(!batterCard&&!catcherCard)return null;
+
+  // Threshold only shown on the perspective-relevant side
+  const thresh=analysis.thresh;
+  const batterIsRelevant=persp==="offense";
+  const catcherIsRelevant=persp==="defense";
+
+  // Tug of war bar: proportional to raw |dRE| — who gains more from overturning
+  const bSwing=batterCard?Math.abs(batterCard.dRE):0;
+  const cSwing=catcherCard?Math.abs(catcherCard.dRE):0;
+  const swingTotal=bSwing+cSwing;
+  const bPct=swingTotal===0?50:(bSwing/swingTotal)*100;
+  const bWins=bPct>=50;
+
+  let tipText="";
+  if(!batterCard)tipText="Only catcher can challenge (no strikes in count)";
+  else if(!catcherCard)tipText="Only batter can challenge (no balls in count)";
+  else{
+    const ratio=Math.max(bSwing,cSwing)/(Math.min(bSwing,cSwing)||0.001);
+    const who=bWins?"Batter":"Catcher";
+    tipText=ratio<1.2?"Challenge stakes are roughly even":ratio<2?`${who} has more to gain from overturning`:`${who} has much more to gain from overturning`;
+  }
+
+  return(
+    <div style={{marginTop:8}}>
+      <div style={{display:"flex",gap:0,alignItems:"stretch"}}>
+        {/* Batter side */}
+        <div style={{flex:1,background:bWins?"#eef0f3":"#f6f7f8",borderRadius:"6px 0 0 6px",padding:"5px 8px",textAlign:"center"}}>
+          {batterCard?(<>
+            <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn strike</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{batterCard.from} → {batterCard.to}</div>
+            {batterIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>{thresh}% needed</div>}
+          </>):(
+            <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No strikes to overturn</div>
+          )}
+        </div>
+        {/* Catcher side */}
+        <div style={{flex:1,background:!bWins?"#eef0f3":"#f6f7f8",borderRadius:"0 6px 6px 0",padding:"5px 8px",textAlign:"center"}}>
+          {catcherCard?(<>
+            <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn ball</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{catcherCard.from} → {catcherCard.to}</div>
+            {catcherIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>{thresh}% needed</div>}
+          </>):(
+            <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No balls to overturn</div>
+          )}
+        </div>
+      </div>
+      {/* Tug of war bar */}
+      <div style={{position:"relative",marginTop:4}}>
+        <div style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",padding:"2px 0"}} onClick={()=>setShowTip(t=>!t)}>
+          <div style={{fontSize:8,fontWeight:600,color:bWins?"#374151":"#c4c8cd",width:14,textAlign:"center"}}>AB</div>
+          <div style={{flex:1,height:5,borderRadius:3,background:"#e5e7eb",overflow:"hidden",display:"flex"}}>
+            {batterCard&&catcherCard?(<>
+              <div style={{width:`${bPct}%`,background:bWins?"#374151":"#c4c8cd",borderRadius:bPct>95?3:"3px 0 0 3px",transition:"width .4s ease"}}/>
+              <div style={{width:`${100-bPct}%`,background:bWins?"#c4c8cd":"#374151",borderRadius:bPct<5?3:"0 3px 3px 0",transition:"width .4s ease"}}/>
+            </>):batterCard?(
+              <div style={{width:"100%",background:"#374151",borderRadius:3}}/>
+            ):catcherCard?(
+              <div style={{width:"100%",background:"#374151",borderRadius:3}}/>
+            ):null}
+          </div>
+          <div style={{fontSize:8,fontWeight:600,color:!bWins?"#374151":"#c4c8cd",width:10,textAlign:"center"}}>P</div>
+          <svg width="10" height="10" viewBox="0 0 12 12" style={{color:"#c4c8cd",flexShrink:0}}>
+            <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/>
+            <text x="6" y="9" textAnchor="middle" fontSize="8" fill="currentColor" fontWeight="600">?</text>
+          </svg>
+        </div>
+        {showTip&&(
+          <div style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",background:"#1f2937",color:"#fff",fontSize:10,padding:"6px 10px",borderRadius:6,whiteSpace:"nowrap",zIndex:10,boxShadow:"0 4px 12px rgba(0,0,0,0.15)",marginTop:4}}>
+            <div style={{marginBottom:2,fontWeight:600}}>Challenge Edge</div>
+            <div style={{color:"#d1d5db"}}>{tipText}</div>
+            <div style={{position:"absolute",top:-4,left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"4px solid transparent",borderRight:"4px solid transparent",borderBottom:"4px solid #1f2937"}}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // xwOBA data: loaded once from static JSON (generated by scripts/update-xwoba.py)
 let _xwobaCache=null;
 async function loadXwobaJson(){
@@ -528,7 +620,7 @@ export default function App(){
               </div>
 
               {/* === GAME SITUATION === */}
-              <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
+              <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:12,position:"relative"}}>
                 <div style={{padding:16}}>
                   <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
                     <div style={{textAlign:"center"}}>
@@ -551,10 +643,28 @@ export default function App(){
                       <div style={{fontSize:26,fontWeight:700,color:"#111827",letterSpacing:-.5,lineHeight:1,fontVariantNumeric:"tabular-nums",marginTop:2}}>{analysis?fmt(analysis.cur):"—"}</div>
                     </div>
                   </div>
-                  {analysis&&<div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <div style={{fontSize:11,color:"#9ca3af"}}>{analysis.tier.sub}</div>
-                    <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Conf Needed</div><ConfidenceNum thresh={analysis.thresh}/></div>
-                  </div>}
+                  {analysis&&(()=>{
+                    // Find the relevant challenge for current perspective
+                    const relResult=analysis.results.find(r=>r.rel);
+                    const oppResult=analysis.results.find(r=>!r.rel);
+                    if(!relResult&&!oppResult)return null; // 0-0: no challenges
+                    if(!relResult)return(
+                      <div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10}}>
+                        <div style={{fontSize:11,color:"#9ca3af"}}>No {persp==="offense"?"batting":"pitching"} challenge available this count</div>
+                      </div>
+                    );
+                    // Use Tango's raw threshold (not matchup-adjusted)
+                    const displayThresh=analysis.thresh;
+                    const displayTier=analysis.tier;
+                    return(
+                      <div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <div style={{fontSize:11,color:"#9ca3af"}}>{displayTier.sub}</div>
+                        <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Conf Needed</div><ConfidenceNum thresh={displayThresh}/></div>
+                      </div>
+                    );
+                  })()}
+
+                  <ChallengeContext analysis={analysis} activeCount={activeCount} persp={persp}/>
 
                   {mode==="manual"&&(<>
                     <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Count</label>
