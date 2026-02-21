@@ -63,7 +63,7 @@ function confidenceFromDist(distInches){
 // MLB API HOOKS
 // ============================================================
 const API="https://statsapi.mlb.com/api/v1";
-const TEAM_ABBR={109:"ARI",110:"BAL",111:"BOS",112:"CHC",113:"CIN",114:"CLE",115:"COL",116:"DET",117:"HOU",118:"KC",119:"LAD",120:"WSH",121:"NYM",133:"OAK",134:"PIT",135:"SD",136:"SEA",137:"SF",138:"STL",139:"TB",140:"TEX",141:"TOR",142:"MIN",143:"PHI",144:"ATL",145:"CWS",146:"MIA",147:"NYY",158:"MIL",160:"LAA"};
+const TEAM_ABBR={108:"LAA",109:"ARI",110:"BAL",111:"BOS",112:"CHC",113:"CIN",114:"CLE",115:"COL",116:"DET",117:"HOU",118:"KC",119:"LAD",120:"WSH",121:"NYM",133:"OAK",134:"PIT",135:"SD",136:"SEA",137:"SF",138:"STL",139:"TB",140:"TEX",141:"TOR",142:"MIN",143:"PHI",144:"ATL",145:"CWS",146:"MIA",147:"NYY",158:"MIL",160:"LAA"};
 const teamAbbr=(t)=>TEAM_ABBR[t?.id]||t?.abbreviation||t?.name||"?";
 let LG_XWOBA=0.315; // default, overridden by xwoba.json if available
 
@@ -908,6 +908,11 @@ export default function App(){
         *{box-sizing:border-box}
         @media(max-width:860px){.sim-grid{grid-template-columns:1fr!important}}
         @media(max-width:600px){.content-wrap{padding:12px!important}.count-grid{grid-template-columns:repeat(3,1fr)!important}.mx-controls{flex-direction:column!important;align-items:flex-start!important}}
+        .game-ticker{display:flex;gap:6px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin;scrollbar-color:#d1d5db transparent;-webkit-overflow-scrolling:touch}
+        .game-ticker::-webkit-scrollbar{height:4px}
+        .game-ticker::-webkit-scrollbar-track{background:transparent}
+        .game-ticker::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:4px}
+        .game-ticker-btn{flex-shrink:0;min-width:120px;padding:6px 10px;border-radius:8px;border:2px solid transparent;cursor:pointer;text-align:left;transition:all .15s;font-family:inherit}
         input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:99px;background:#e5e7eb;outline:none}
         input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#111827;cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.15)}
         input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#111827;cursor:pointer;border:2px solid #fff}
@@ -934,7 +939,50 @@ export default function App(){
       </header>
 
       <div className="content-wrap" style={{maxWidth:1100,margin:"0 auto",padding:"16px"}}>
-        {tab==="simulator"&&(
+        {tab==="simulator"&&(<>
+          {/* === GAME TICKER CAROUSEL === */}
+          {(mode==="live"||mode==="signal")&&!gamesLoading&&games.length>0&&(
+            <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:12,padding:"10px 12px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Today's Games</div>
+                <div style={{display:"flex",gap:10,fontSize:10,color:"#9ca3af"}}>
+                  {liveGames.length>0&&<span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",display:"inline-block",animation:"pulse 1.5s infinite"}}/>{liveGames.length} Live</span>}
+                  {finalGames.length>0&&<span>{finalGames.length} Final</span>}
+                  {scheduledGames.length>0&&<span>{scheduledGames.length} Sched</span>}
+                </div>
+              </div>
+              <div className="game-ticker">
+                {[...liveGames,...finalGames,...scheduledGames].map(g=>{
+                  const away=g.teams?.away,home=g.teams?.home;
+                  const sel=selectedGame===g.gamePk;
+                  const ls=g.linescore;
+                  const isLive=g.status?.abstractGameState==="Live";
+                  const isFinal=g.status?.abstractGameState==="Final";
+                  const isScheduled=g.status?.abstractGameState==="Preview";
+                  return(
+                    <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} className="game-ticker-btn" style={{
+                      background:sel?"#111827":isLive?"#f0fdf4":isFinal?"#f9fafb":"#f3f4f6",
+                      color:sel?"#fff":"#374151",
+                      borderColor:sel?"#111827":isLive?"#bbf7d0":"transparent",
+                      opacity:isScheduled?.6:1,
+                    }}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                        <div style={{fontSize:11,fontWeight:600,lineHeight:1.4}}>
+                          <div>{teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"}</div>
+                          <div>{teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}</div>
+                        </div>
+                        <div style={{fontSize:9,color:sel?"rgba(255,255,255,.6)":"#9ca3af",textAlign:"right",lineHeight:1.5}}>
+                          {isLive&&<div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end"}}><span style={{width:5,height:5,borderRadius:"50%",background:"#22c55e",display:"inline-block",animation:"pulse 1.5s infinite"}}/><span style={{color:sel?"#4ade80":"#16a34a",fontWeight:600}}>{ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}</span></div>}
+                          {isFinal&&<div style={{fontWeight:500}}>Final{(ls?.currentInning&&ls.currentInning>9)?` (${ls.currentInning})`:""}</div>}
+                          {isScheduled&&<div>{g.gameDate?new Date(g.gameDate).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"TBD"}</div>}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="sim-grid" style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:16,alignItems:"start"}}>
             {/* LEFT PANEL */}
             <div>
@@ -958,39 +1006,20 @@ export default function App(){
                     <div>
                       {!trackmanActive&&(<>
                         {gamesLoading&&<p style={{fontSize:12,color:"#9ca3af",margin:0}}>Loading today's schedule...</p>}
-                        {!gamesLoading&&liveGames.length===0&&(
+                        {!gamesLoading&&games.length===0&&(
+                          <div style={{fontSize:12,color:"#9ca3af",lineHeight:1.6}}>
+                            <p style={{margin:0}}>No games scheduled today.</p>
+                          </div>
+                        )}
+                        {!gamesLoading&&games.length>0&&liveGames.length===0&&(
                           <div style={{fontSize:12,color:"#9ca3af",lineHeight:1.6}}>
                             <p style={{margin:"0 0 6px"}}>No live games right now.</p>
                             {scheduledGames.length>0&&<p style={{margin:0}}>{scheduledGames.length} game{scheduledGames.length>1?"s":""} scheduled today.</p>}
-                            {games.length===0&&<p style={{margin:0}}>No games scheduled today.</p>}
                           </div>
                         )}
-                        {!gamesLoading&&liveGames.length>0&&(
-                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                            {liveGames.map(g=>{
-                              const away=g.teams?.away,home=g.teams?.home;
-                              const sel=selectedGame===g.gamePk;
-                              const ls=g.linescore;
-                              return(
-                                <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} style={{
-                                  padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",textAlign:"left",
-                                  background:sel?"#111827":"#f3f4f6",color:sel?"#fff":"#374151",
-                                  transition:"all .15s",fontFamily:"inherit",
-                                }}>
-                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                                    <div style={{fontSize:12,fontWeight:600}}>
-                                      {teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"} @ {teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}
-                                    </div>
-                                    <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                      <div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",animation:"pulse 1.5s infinite"}}/>
-                                      <span style={{fontSize:10,color:sel?"rgba(255,255,255,.6)":"#9ca3af"}}>
-                                        {ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </button>
-                              );
-                            })}
+                        {!gamesLoading&&selectedGame&&selGameData&&(
+                          <div style={{fontSize:12,fontWeight:600,color:"#111827",marginBottom:4}}>
+                            {awayAbbr} @ {homeAbbr}
                           </div>
                         )}
 
@@ -1245,9 +1274,9 @@ export default function App(){
                         <div style={{flex:1,textAlign:"center",fontSize:10,color:"#9ca3af",fontWeight:500}}>{demoIdx+1} / {DEMO_PLAYS.length}</div>
                         <button onClick={()=>setDemoIdx(i=>Math.min(DEMO_PLAYS.length-1,i+1))} disabled={demoIdx===DEMO_PLAYS.length-1} style={{width:28,height:28,borderRadius:6,border:"1px solid #e5e7eb",background:demoIdx===DEMO_PLAYS.length-1?"#f9fafb":"#fff",color:demoIdx===DEMO_PLAYS.length-1?"#d1d5db":"#374151",cursor:demoIdx===DEMO_PLAYS.length-1?"default":"pointer",fontSize:14,fontWeight:700,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
                       </div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>
+                      <div style={{display:"grid",gridTemplateColumns:`repeat(${DEMO_PLAYS.length},1fr)`,gap:4,marginBottom:10}}>
                         {DEMO_PLAYS.map((dp,di)=>(
-                          <button key={di} onClick={()=>setDemoIdx(di)} style={{padding:"3px 7px",borderRadius:5,fontSize:9,fontWeight:demoIdx===di?700:400,border:"none",cursor:"pointer",background:demoIdx===di?"#111827":"#f9fafb",color:demoIdx===di?"#fff":"#6b7280",transition:"all .12s",fontFamily:"inherit"}}>{di+1}</button>
+                          <button key={di} onClick={()=>setDemoIdx(di)} style={{padding:"4px 0",borderRadius:5,fontSize:10,fontWeight:demoIdx===di?700:400,border:"none",cursor:"pointer",background:demoIdx===di?"#111827":"#f9fafb",color:demoIdx===di?"#fff":"#6b7280",transition:"all .12s",fontFamily:"inherit",textAlign:"center"}}>{di+1}</button>
                         ))}
                       </div>
                       <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#374151",lineHeight:1.6}}>
@@ -1502,7 +1531,7 @@ export default function App(){
               )}
             </div>
           </div>
-        )}
+        </>)}
 
         {tab==="matrix"&&<MatrixView {...{mOuts,setMOuts,mView,setMView}} seg={(active)=>({padding:"5px 14px",borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"})}/>}
         {tab==="thresholds"&&<ThresholdMatrix/>}
@@ -1818,7 +1847,7 @@ function Methodology(){
 
       <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective zone width accounts for the ball diameter: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the plate, so the zone boundary for ball-center coordinates is (17" + 2.9") / 2 = 9.95" from center. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
 
-      <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
+      <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features 8 real called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
 
       <div style={s}><div style={h}>How to Get Pitch Data</div>
         <div style={{marginBottom:12}}>
