@@ -183,7 +183,7 @@ function usePlayerStats(gamePk,mode){
   const fetched=useRef(null);
 
   useEffect(()=>{
-    if(mode!=="live"||!gamePk||fetched.current===gamePk){return;}
+    if((mode!=="live"&&mode!=="signal")||!gamePk||fetched.current===gamePk){return;}
     let cancelled=false;
     async function load(){
       setLoading(true);
@@ -289,13 +289,16 @@ function useLiveGame(gamePk){
   const[state,setState]=useState(null);
   const[pitch,setPitch]=useState(null);
   const[err,setErr]=useState(null);
-  const timeoutRef=useRef(null);
-  const prevKey=useRef(null);
+  const lsTimer=useRef(null);
+  const pitchTimer=useRef(null);
+  const lastPitchId=useRef(null);
 
   useEffect(()=>{
-    if(!gamePk){setState(null);setPitch(null);setErr(null);prevKey.current=null;return;}
+    if(!gamePk){setState(null);setPitch(null);setErr(null);lastPitchId.current=null;return;}
     let cancelled=false;
-    async function poll(){
+
+    // Linescore poll — game state every 5s
+    async function pollLinescore(){
       try{
         const controller=new AbortController();
         const tid=setTimeout(()=>controller.abort(),8000);
@@ -323,50 +326,48 @@ function useLiveGame(gamePk){
           batter,pitcher,batterId,pitcherId,
         });
         setErr(null);
-
-        // Detect state change → fetch pitch data from feed/live
-        const key=`${inn}-${isTop}-${balls}-${strikes}-${outs_val}`;
-        if(key!==prevKey.current){
-          prevKey.current=key;
-          // Clear pitch on new batter (count reset to 0-0) or inning change
-          if(balls===0&&strikes===0)setPitch(null);
-          try{
-            const ctrl2=new AbortController();
-            const tid2=setTimeout(()=>ctrl2.abort(),10000);
-            const res2=await fetch(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`,{signal:ctrl2.signal});
-            clearTimeout(tid2);
-            if(res2.ok&&!cancelled){
-              const fd=await res2.json();
-              const events=fd.liveData?.plays?.currentPlay?.playEvents;
-              if(events&&events.length>0){
-                let lastP=null;
-                for(let i=events.length-1;i>=0;i--){if(events[i].isPitch){lastP=events[i];break;}}
-                if(lastP){
-                  const callCode=lastP.details?.call?.code;
-                  if(callCode==="C"||callCode==="B"){
-                    const pX=lastP.pitchData?.coordinates?.pX;
-                    const pZ=lastP.pitchData?.coordinates?.pZ;
-                    if(pX!=null&&pZ!=null){
-                      setPitch({pX,pZ,
-                        szTop:lastP.pitchData?.strikeZoneTop??3.5,
-                        szBot:lastP.pitchData?.strikeZoneBottom??1.6,
-                        call:callCode==="C"?"strike":"ball",
-                        type:lastP.details?.type?.description||lastP.details?.type?.code||"",
-                        speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
-                      });
-                    }
-                  }
-                  // If last pitch was a swing/foul, keep previous called pitch visible
-                }
-              }
-            }
-          }catch(e){/* pitch fetch failed, keep going */}
-        }
       }catch(e){if(!cancelled)setErr(e.name==="AbortError"?"Connection timed out":e.message)}
-      finally{if(!cancelled)timeoutRef.current=setTimeout(poll,5000);}
+      finally{if(!cancelled)lsTimer.current=setTimeout(pollLinescore,5000);}
     }
-    poll();
-    return()=>{cancelled=true;clearTimeout(timeoutRef.current)};
+
+    // Pitch poll — feed/live every 10s
+    async function pollPitch(){
+      try{
+        const controller=new AbortController();
+        const tid=setTimeout(()=>controller.abort(),10000);
+        const res=await fetch(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`,{signal:controller.signal});
+        clearTimeout(tid);
+        if(!res.ok||cancelled)return;
+        const fd=await res.json();
+        const events=fd.liveData?.plays?.currentPlay?.playEvents;
+        if(!events||events.length===0)return;
+        let lastP=null;
+        for(let i=events.length-1;i>=0;i--){if(events[i].isPitch){lastP=events[i];break;}}
+        if(!lastP)return;
+        const pitchId=`${fd.liveData?.plays?.currentPlay?.atBatIndex}-${lastP.index}`;
+        if(pitchId===lastPitchId.current)return;
+        lastPitchId.current=pitchId;
+        const callCode=lastP.details?.call?.code;
+        if(callCode==="C"||callCode==="B"){
+          const pX=lastP.pitchData?.coordinates?.pX;
+          const pZ=lastP.pitchData?.coordinates?.pZ;
+          if(pX!=null&&pZ!=null){
+            setPitch({pX,pZ,
+              szTop:lastP.pitchData?.strikeZoneTop??3.5,
+              szBot:lastP.pitchData?.strikeZoneBottom??1.6,
+              call:callCode==="C"?"strike":"ball",
+              type:lastP.details?.type?.description||lastP.details?.type?.code||"",
+              speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
+            });
+          }
+        }else{setPitch(null);}
+      }catch(e){/* pitch fetch failed, keep going */}
+      finally{if(!cancelled)pitchTimer.current=setTimeout(pollPitch,10000);}
+    }
+
+    pollLinescore();
+    pollPitch();
+    return()=>{cancelled=true;clearTimeout(lsTimer.current);clearTimeout(pitchTimer.current)};
   },[gamePk]);
 
   return{state,pitch,err};
@@ -379,7 +380,7 @@ const HEADSHOT="https://content.mlb.com/images/headshots/current/60x60/";
 const lastName=n=>{if(!n)return"";const p=n.split(" ");if(p.length<=1)return n;const last=p[p.length-1];if(["Jr.","Sr.","II","III","IV"].includes(last))return p[p.length-2]+" "+last;return last;};
 // 2025 season xwOBA from Baseball Savant (baseballsavant.mlb.com)
 // Pitchers: xwOBA-against (lower = better). Batters: xwOBA (higher = better).
-const DEMO_STATS={571970:{xwoba:.374,type:"batter",name:"Max Muncy"},605135:{xwoba:.310,type:"pitcher",name:"Chris Bassitt"},605483:{xwoba:.283,type:"pitcher",name:"Blake Snell"},606192:{xwoba:.323,type:"batter",name:"Teoscar Hernández"},607192:{xwoba:.285,type:"pitcher",name:"Tyler Glasnow"},622554:{xwoba:.290,type:"pitcher",name:"Seranthony Domínguez"},656546:{xwoba:.285,type:"pitcher",name:"Jeff Hoffman"},660271:{xwoba:.250,type:"pitcher",name:"Shohei Ohtani"},665489:{xwoba:.384,type:"batter",name:"Vladimir Guerrero Jr."},665926:{xwoba:.308,type:"batter",name:"Andrés Giménez"},666182:{xwoba:.353,type:"batter",name:"Bo Bichette"},669257:{xwoba:.378,type:"batter",name:"Will Smith"},669456:{xwoba:.310,type:"pitcher",name:"Shane Bieber"},672386:{xwoba:.359,type:"batter",name:"Alejandro Kirk"},676914:{xwoba:.323,type:"batter",name:"Davis Schneider"},702056:{xwoba:.295,type:"pitcher",name:"Trey Yesavage"},808967:{xwoba:.259,type:"pitcher",name:"Yoshinobu Yamamoto"}};
+const DEMO_STATS={571970:{xwoba:.374,type:"batter",name:"Max Muncy"},605135:{xwoba:.310,type:"pitcher",name:"Chris Bassitt"},605483:{xwoba:.283,type:"pitcher",name:"Blake Snell"},606192:{xwoba:.323,type:"batter",name:"Teoscar Hernández"},607192:{xwoba:.285,type:"pitcher",name:"Tyler Glasnow"},622554:{xwoba:.290,type:"pitcher",name:"Seranthony Domínguez"},656546:{xwoba:.285,type:"pitcher",name:"Jeff Hoffman"},660271:{xwoba:.250,type:"pitcher",name:"Shohei Ohtani"},665489:{xwoba:.384,type:"batter",name:"Vladimir Guerrero Jr."},665926:{xwoba:.308,type:"batter",name:"Andrés Giménez"},666182:{xwoba:.353,type:"batter",name:"Bo Bichette"},669257:{xwoba:.378,type:"batter",name:"Will Smith"},669456:{xwoba:.310,type:"pitcher",name:"Shane Bieber"},676914:{xwoba:.323,type:"batter",name:"Davis Schneider"},702056:{xwoba:.295,type:"pitcher",name:"Trey Yesavage"},808967:{xwoba:.259,type:"pitcher",name:"Yoshinobu Yamamoto"}};
 const DEMO_PLAYS=[
   {label:"Hernández vs Bassitt",sub:"Top 6 · 0 out · 1st & 2nd · LAD 1, TOR 3",note:"Ump scorecard's #1 most impactful missed call. Strike called a ball on a 1-1 count — runners on 1st and 2nd with nobody out.",count:"2-1",outs:0,bases:"110",inn:6,isTop:true,away:1,home:3,batterId:606192,pitcherId:605135,batter:"Teoscar Hernández",pitcher:"Chris Bassitt",
     pitch:{pX:0.266,pZ:3.401,szTop:3.38,szBot:1.62,call:"ball",type:"Sinker",speed:"92.1 mph"}},
@@ -391,16 +392,12 @@ const DEMO_PLAYS=[
     pitch:{pX:0.914,pZ:2.835,szTop:3.11,szBot:1.53,call:"strike",type:"Changeup",speed:"81.8 mph"}},
   {label:"Smith called K",sub:"Top 9 · 2 out · Bases empty · Tied 4-4",note:"6 called pitches — the most in any at-bat. Game-tying run already in. Hoffman gets Smith looking on a full count. Called strike 3 per ump scorecard was ball called strike (#2 most impactful).",count:"3-2",outs:2,bases:"000",inn:9,isTop:true,away:4,home:4,batterId:669257,pitcherId:656546,batter:"Will Smith",pitcher:"Jeff Hoffman",
     pitch:{pX:0.960,pZ:2.130,szTop:3.33,szBot:1.57,call:"strike",type:"Four-Seam Fastball",speed:"94.9 mph"}},
-  {label:"Kirk HBP — challenged!",sub:"Bot 9 · 1 out · 1st & 2nd · Tied 4-4",note:"Bases loaded in the 9th. Dodgers actually challenged this HBP call — upheld. Kirk hit by pitch loads the bases with 1 out in a tie game.",count:"0-1",outs:1,bases:"110",inn:9,isTop:false,away:4,home:4,batterId:672386,pitcherId:808967,batter:"Alejandro Kirk",pitcher:"Yoshinobu Yamamoto",
-    pitch:{pX:-0.483,pZ:1.768,szTop:3.13,szBot:1.46,call:"strike",type:"Splitter",speed:"92.6 mph"}},
   {label:"Hernández walks, bases loaded",sub:"Top 10 · 1 out · 1st & 2nd · Tied 4-4",note:"Extras. Bases loaded with 1 out. 4 called pitches including the walk on 3-2. A challenge on a ball/strike here changes everything.",count:"3-2",outs:1,bases:"110",inn:10,isTop:true,away:4,home:4,batterId:606192,pitcherId:622554,batter:"Teoscar Hernández",pitcher:"Seranthony Domínguez",
     pitch:{pX:1.014,pZ:2.325,szTop:3.55,szBot:1.70,call:"ball",type:"Four-Seam Fastball",speed:"98.5 mph"}},
   {label:"Smith go-ahead HR",sub:"Top 11 · 2 out · Bases empty · Tied 4-4",note:"Will Smith homers off Bieber to break the tie in the 11th. 2 called balls early in the count.",count:"2-0",outs:2,bases:"000",inn:11,isTop:true,away:4,home:4,batterId:669257,pitcherId:669456,batter:"Will Smith",pitcher:"Shane Bieber",
     pitch:{pX:1.015,pZ:0.973,szTop:3.40,szBot:1.59,call:"ball",type:"Knuckle Curve",speed:"82.5 mph"}},
   {label:"Vlad Jr. double",sub:"Bot 11 · 0 out · Bases empty · LAD 5, TOR 4",note:"Down 1 in the bottom of the 11th. Vlad Jr. rips a double — 5 called pitches in a full-count battle. Tying run in scoring position.",count:"3-2",outs:0,bases:"000",inn:11,isTop:false,away:5,home:4,batterId:665489,pitcherId:808967,batter:"Vladimir Guerrero Jr.",pitcher:"Yoshinobu Yamamoto",
     pitch:{pX:-1.105,pZ:3.131,szTop:3.67,szBot:1.51,call:"ball",type:"Splitter",speed:"91.3 mph"}},
-  {label:"Kirk GIDP — game over",sub:"Bot 11 · 1 out · 1st & 3rd · LAD 5, TOR 4",note:"Tying run on 3rd, 1 out. Kirk grounds into a double play to end the World Series. Called strike on 0-2 — was it worth challenging?",count:"0-2",outs:1,bases:"101",inn:11,isTop:false,away:5,home:4,batterId:672386,pitcherId:808967,batter:"Alejandro Kirk",pitcher:"Yoshinobu Yamamoto",
-    pitch:{pX:-0.279,pZ:1.963,szTop:2.92,szBot:1.37,call:"strike",type:"Curveball",speed:"80.3 mph"}},
 ];
 
 // ============================================================
@@ -549,11 +546,11 @@ export default function App(){
   const[persp,setPersp]=useState("offense");
   // Live game state
   const[selectedGame,setSelectedGame]=useState(null);
-  const[mode,setMode]=useState("manual"); // "manual" | "live" | "demo"
+  const[mode,setMode]=useState("manual"); // "manual" | "live" | "demo" | "signal"
   const[demoIdx,setDemoIdx]=useState(0);
   const demoPlay=DEMO_PLAYS[demoIdx]||DEMO_PLAYS[0];
   const{games,loading:gamesLoading}=useTodaysGames();
-  const{state:liveState,pitch:livePitch}=useLiveGame(mode==="live"?selectedGame:null);
+  const{state:liveState,pitch:livePitch}=useLiveGame(mode==="live"||mode==="signal"?selectedGame:null);
   const{stats:playerStats,loading:statsLoading}=usePlayerStats(selectedGame,mode);
   // Matrix state
   const[mOuts,setMOuts]=useState(0);
@@ -572,7 +569,7 @@ export default function App(){
       }
       return{mult,batterXw:bXw,pitcherXw:pXw,batterName:bSt?.name||"",pitcherName:pSt?.name||""};
     }
-    if(mode!=="live"||!liveState)return{mult:1,batterXw:null,pitcherXw:null,batterName:"",pitcherName:""};
+    if(mode!=="live"&&mode!=="signal"||!liveState)return{mult:1,batterXw:null,pitcherXw:null,batterName:"",pitcherName:""};
     const bId=liveState.batterId,pId=liveState.pitcherId;
     const bSt=bId&&playerStats[bId],pSt=pId&&playerStats[pId];
     const bXw=bSt?.xwoba,pXw=pSt?.xwoba;
@@ -584,9 +581,10 @@ export default function App(){
   },[mode,liveState,playerStats,demoPlay]);
 
   // Derived: which game state to use
-  const activeCount=mode==="live"&&liveState?liveState.count:mode==="demo"?demoPlay.count:count;
-  const activeOuts=mode==="live"&&liveState?liveState.outs:mode==="demo"?demoPlay.outs:outs;
-  const activeBs=mode==="live"&&liveState?liveState.bases:mode==="demo"?demoPlay.bases:bs;
+  const isLive=mode==="live"||mode==="signal";
+  const activeCount=isLive&&liveState?liveState.count:mode==="demo"?demoPlay.count:count;
+  const activeOuts=isLive&&liveState?liveState.outs:mode==="demo"?demoPlay.outs:outs;
+  const activeBs=isLive&&liveState?liveState.bases:mode==="demo"?demoPlay.bases:bs;
 
   // Active pitch data for zone card
   // Batting perspective → challenging a called strike
@@ -596,7 +594,7 @@ export default function App(){
       const call=persp==="offense"?"strike":"ball";
       return{pX:manualPitch.pX,pZ:manualPitch.pZ,szTop:3.5,szBot:1.6,call,type:"",speed:""};
     }
-    if(mode==="live"&&livePitch){
+    if((mode==="live"||mode==="signal")&&livePitch){
       return{pX:livePitch.pX,pZ:livePitch.pZ,szTop:livePitch.szTop,szBot:livePitch.szBot,call:livePitch.call,type:livePitch.type,speed:livePitch.speed};
     }
     if(mode==="demo"&&demoPlay.pitch){
@@ -692,9 +690,12 @@ export default function App(){
                     <button onClick={()=>setMode("demo")} style={{...seg(mode==="demo"),background:mode==="demo"?"#111827":"#f3f4f6",color:mode==="demo"?"#fff":"#6b7280"}}>
                       WS G7
                     </button>
+                    <button onClick={()=>setMode("signal")} style={{...seg(mode==="signal"),background:mode==="signal"?"#111827":"#f3f4f6",color:mode==="signal"?"#fff":"#6b7280"}}>
+                      Signal
+                    </button>
                   </div>
 
-                  {mode==="live"&&(
+                  {(mode==="live"||mode==="signal")&&(
                     <div>
                       {gamesLoading&&<p style={{fontSize:12,color:"#9ca3af",margin:0}}>Loading today's schedule...</p>}
                       {!gamesLoading&&liveGames.length===0&&(
@@ -889,13 +890,19 @@ export default function App(){
                   {mode==="live"&&!selectedGame&&(
                     <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Select a live game above.</p>
                   )}
+                  {mode==="signal"&&!liveState&&selectedGame&&(
+                    <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Connecting to game feed...</p>
+                  )}
+                  {mode==="signal"&&!selectedGame&&(
+                    <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Select a live game above.</p>
+                  )}
                 </div>
               </div>
 
               {/* === CONTEXT === */}
               <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
                 <div style={{padding:16}}>
-                  {mode==="live"&&liveState&&(
+                  {isLive&&liveState&&(
                     <div style={{display:"flex",gap:12,marginBottom:10,fontSize:12,color:"#6b7280"}}>
                       <span>{liveState.isTop?"Top":"Bot"} {liveState.inn}</span>
                       <span>{awayAbbr} {liveState.away} – {homeAbbr} {liveState.home}</span>
@@ -914,6 +921,49 @@ export default function App(){
 
             {/* RIGHT PANEL */}
             <div style={{minHeight:120}}>
+              {mode==="signal"&&(()=>{
+                // Signal mode: big color block
+                if(!liveState||!selectedGame)return(
+                  <div style={{background:"#f3f4f6",borderRadius:16,padding:64,textAlign:"center",color:"#9ca3af",fontSize:15}}>
+                    Select a live game to start
+                  </div>
+                );
+                if(!activePitch||!analysis)return(
+                  <div style={{background:"#1f2937",borderRadius:16,padding:64,textAlign:"center"}}>
+                    <div style={{fontSize:16,fontWeight:600,color:"#9ca3af"}}>Waiting for called pitch...</div>
+                    <div style={{marginTop:12}}><Diamond bs={activeBs} size={48}/></div>
+                    <div style={{marginTop:8}}><Dots count={activeCount} sm/></div>
+                  </div>
+                );
+                const dist=getDistFromZone(activePitch.pX,activePitch.pZ,activePitch.szTop,activePitch.szBot);
+                const pOutside=confidenceFromDist(dist);
+                const conf=activePitch.call==="strike"?pOutside:100-pOutside;
+                const challengerPersp=activePitch.call==="strike"?"offense":"defense";
+                const canChallenge=persp===challengerPersp;
+                const thresh=analysis.thresh;
+
+                if(!canChallenge)return(
+                  <div style={{background:"#1f2937",borderRadius:16,padding:64,textAlign:"center"}}>
+                    <div style={{fontSize:20,fontWeight:700,color:"#6b7280"}}>—</div>
+                    <div style={{fontSize:13,color:"#9ca3af",marginTop:8}}>Called {activePitch.call} favors you</div>
+                  </div>
+                );
+
+                const MARGIN=15;
+                const gap=conf-thresh;
+                let bg,textCol,label;
+                if(gap>=MARGIN){bg="#16a34a";textCol="#fff";label="CHALLENGE";}
+                else if(gap<=-MARGIN){bg="#dc2626";textCol="#fff";label="HOLD";}
+                else{bg="#eab308";textCol="#1a1a1a";label="CLOSE";}
+
+                return(
+                  <div style={{background:bg,borderRadius:16,padding:"48px 32px",textAlign:"center",transition:"background .3s ease",minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+                    <div style={{fontSize:48,fontWeight:800,color:textCol,letterSpacing:-1,lineHeight:1}}>{label}</div>
+                    <div style={{fontSize:18,fontWeight:600,color:textCol,opacity:0.85,marginTop:12}}>{conf}% conf · need {thresh}%</div>
+                    <div style={{fontSize:13,color:textCol,opacity:0.7,marginTop:8}}>Called {activePitch.call} · {activePitch.type} {activePitch.speed}</div>
+                  </div>
+                );
+              })()}
               {mode==="manual"&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
@@ -922,18 +972,18 @@ export default function App(){
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
-              {matchup.mult!==1&&analysis?.results?.length>0&&(()=>{
+              {mode!=="manual"&&mode!=="signal"&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
+              {mode!=="signal"&&matchup.mult!==1&&analysis?.results?.length>0&&(()=>{
                 const mpct=(matchup.mult-1)*100;
                 const col=mpct>0?"#16a34a":mpct<0?"#dc2626":"#6b7280";
                 return <div style={{background:mpct>0?"#f9fafb":"#fef2f2",border:`1px solid ${mpct>0?"#bbf7d0":"#fecaca"}`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,fontWeight:600,color:col}}>
                   Challenges worth {mpct>0?"+":""}{mpct.toFixed(0)}% this AB
                 </div>;
               })()}
-              {analysis?.results?.map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} persp={persp} mode={mode}/>)}
-              {(!analysis||analysis.results.length===0)&&(
+              {mode!=="signal"&&analysis?.results?.map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} persp={persp} mode={mode}/>)}
+              {mode!=="signal"&&(!analysis||analysis.results.length===0)&&(
                 <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:32,textAlign:"center",color:"#9ca3af",fontSize:13}}>
-                  {mode==="live"&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
+                  {isLive&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
                 </div>
               )}
             </div>
@@ -1146,13 +1196,14 @@ function Methodology(){
 
       <div style={s}><div style={h}>Terminal Transitions (K / BB)</div><p style={p}>Overturning a pitch doesn't always produce another count — it can end the plate appearance. On any x-2 count, overturning a ball to a strike produces a strikeout: the batter is out, runners stay, and RE drops to the new base-out state at 0-0 (or zero if it's the third out). On any 3-x count, overturning a strike to a ball produces a walk: the batter takes first, forced runners advance, and a bases-loaded walk scores a run. These terminal transitions change the base-out state, not just the count, and are modeled explicitly.</p></div>
 
-      <div style={s}><div style={h}>Live Game Integration</div><p style={p}>When connected to a live game, the engine polls the MLB Stats API linescore endpoint every 5 seconds, parsing count, outs, base runners, inning, and score. Challenge decisions update automatically with each pitch. The confidence input remains manual — in production this would be fed by pitch tracking data estimating challenge success probability based on pitch location relative to the ABS zone boundary.</p></div>
+      <div style={s}><div style={h}>Live Game Integration</div><p style={p}>When connected to a live game, the engine polls the MLB Stats API linescore endpoint every 5 seconds, parsing count, outs, base runners, inning, and score. When the game state changes (new pitch, new batter, inning change), it fetches the full feed/live endpoint to extract Statcast pitch coordinates (pX, pZ, strikeZoneTop, strikeZoneBottom), pitch type, and velocity. Only called balls and called strikes trigger the zone card — swings and fouls keep the previous called pitch visible. This on-demand approach avoids polling the ~2MB feed/live response every cycle, fetching it only when a new pitch actually lands.</p></div>
 
       <div style={s}><div style={h}>Matchup Adjustment</div><p style={p}>The engine preloads season xwOBA for all players from Baseball Savant (via a serverless API endpoint) with a statsapi fallback. For each at-bat, it computes a matchup multiplier that scales ΔRE to reflect how the current batter-pitcher pairing compares to league average. This is our addition on top of Tango's base framework, which treats all matchups equally.</p><div style={code}>batterFactor = batterXwOBA / leagueXwOBA<br/>pitcherFactor = pitcherXwOBA_against / leagueXwOBA<br/>matchupMultiplier = batterFactor × pitcherFactor<br/>adjustedΔRE = ΔRE × matchupMultiplier</div><p style={{...p,marginTop:8}}>A league-average matchup produces a multiplier of ~1.0×, leaving the challenge decision unchanged. An elite hitter facing a bad pitcher can push ×1.3+, meaning the same base-out state swing is worth 30% more runs — lowering the break-even confidence threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar for when to challenge. The multiplier is clamped to [0.5, 2.0] to prevent extreme small-sample distortions.</p></div>
 
-      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball the catcher might challenge, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
+      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective zone width accounts for the ball diameter: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the plate, so the zone boundary for ball-center coordinates is (17" + 2.9") / 2 = 9.95" from center. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
 
-      <div style={s}><div style={h}>Limitations & Next Steps</div><p style={p}>The matchup adjustment uses season xwOBA from Statcast, which strips out defense and luck but doesn't yet capture platoon splits (L/R advantages), recent form, or pitch-type matchup edges. A production system would incorporate rolling xwOBA windows, platoon splits, and potentially batter hot/cold zones against specific pitch types. The zone model currently uses click-to-plot in manual mode; live integration requires polling the MLB Stats API feed/live endpoint for pitch coordinates (pX, pZ, strikeZoneTop, strikeZoneBottom). Trackman data can also be consumed via websocket or CSV for NCAA/college environments where ABS is being adopted.</p></div>
+      <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features 10 real called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
+      <div style={s}><div style={h}>Limitations & Next Steps</div><p style={p}>The matchup adjustment uses season xwOBA from Statcast, which strips out defense and luck but doesn't yet capture platoon splits (L/R advantages), recent form, or pitch-type matchup edges. A production system would incorporate rolling xwOBA windows, platoon splits, and potentially batter hot/cold zones against specific pitch types. Trackman data can also be consumed via websocket or CSV for NCAA/college environments where ABS is being adopted.</p></div>
 
       <div style={{...s,background:"#f9fafb"}}><div style={{...h,fontSize:13}}>Data Sources</div><p style={{...p,fontSize:12}}>RE288 matrix computed recursively per <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (2018)</a>, using 2010–2015 Retrosheet play-by-play data. Challenge thresholds per <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (Feb 2025)</a>, validated against 2025 AAA challenge data. The RE288 framework and the concept of count-level run values are one of Tango's many contributions to modern sabermetrics. Methodology follows Tango, Lichtman & Dolphin, "The Book: Playing the Percentages in Baseball." Live game data from MLB Stats API (statsapi.mlb.com). xwOBA data from Baseball Savant (baseballsavant.mlb.com).</p></div>
     </div>
