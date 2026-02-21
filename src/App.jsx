@@ -291,6 +291,9 @@ function useTodaysGames(){
 function useLiveGame(gamePk){
   const[state,setState]=useState(null);
   const[pitch,setPitch]=useState(null);
+  const[pitchSequence,setPitchSequence]=useState([]);
+  const[lastPlayResult,setLastPlayResult]=useState(null);
+  const[recentPlays,setRecentPlays]=useState([]);
   const[err,setErr]=useState(null);
   const lsTimer=useRef(null);
   const pitchTimer=useRef(null);
@@ -299,7 +302,7 @@ function useLiveGame(gamePk){
   const lsSnap=useRef(null); // snapshot of linescore state for pitch context
 
   useEffect(()=>{
-    if(!gamePk){setState(null);setPitch(null);setErr(null);lastPitchId.current=null;lastAbIndex.current=null;lsSnap.current=null;return;}
+    if(!gamePk){setState(null);setPitch(null);setPitchSequence([]);setLastPlayResult(null);setRecentPlays([]);setErr(null);lastPitchId.current=null;lastAbIndex.current=null;lsSnap.current=null;return;}
     let cancelled=false;
 
     // Linescore poll — game state every 5s
@@ -346,7 +349,42 @@ function useLiveGame(gamePk){
         clearTimeout(tid);
         if(!res.ok||cancelled)return;
         const fd=await res.json();
-        const curPlay=fd.liveData?.plays?.currentPlay;
+
+        // --- Play-by-play extraction (from same response, no new fetches) ---
+        const curPlayData=fd.liveData?.plays?.currentPlay;
+
+        // Pitch sequence: every pitch in the current at-bat
+        if(curPlayData?.playEvents){
+          const seq=curPlayData.playEvents.filter(e=>e.isPitch).map(e=>({
+            callCode:e.details?.call?.code||"",
+            callDesc:e.details?.call?.description||"",
+            pitchType:e.details?.type?.code||"",
+            speed:e.pitchData?.startSpeed||null,
+            balls:e.count?.balls??0,
+            strikes:e.count?.strikes??0,
+          }));
+          if(!cancelled)setPitchSequence(seq);
+        }else if(!cancelled)setPitchSequence([]);
+
+        // Recent completed at-bats (last 8) + last play result
+        const allPlaysArr=fd.liveData?.plays?.allPlays||[];
+        const completed=allPlaysArr.filter(p=>p.about?.isComplete&&p.result?.event).slice(-8).reverse().map(p=>({
+          batter:p.matchup?.batter?.fullName||"",
+          event:p.result?.event||"",
+          rbi:p.result?.rbi??0,
+          isOut:p.result?.isOut??true,
+          count:`${p.count?.balls??0}-${p.count?.strikes??0}`,
+          atBatIndex:p.atBatIndex,
+          inning:p.about?.inning??0,
+          halfInning:p.about?.halfInning||"top",
+        }));
+        if(!cancelled){
+          setRecentPlays(completed);
+          setLastPlayResult(completed.length>0?completed[0]:null);
+        }
+        // --- End play-by-play extraction ---
+
+        const curPlay=curPlayData;
         const events=curPlay?.playEvents;
         if(!events||events.length===0)return;
         let lastP=null;
@@ -400,7 +438,7 @@ function useLiveGame(gamePk){
     return()=>{cancelled=true;clearTimeout(lsTimer.current);clearTimeout(pitchTimer.current)};
   },[gamePk]);
 
-  return{state,pitch,err};
+  return{state,pitch,pitchSequence,lastPlayResult,recentPlays,err};
 }
 
 // ============================================================
@@ -668,8 +706,9 @@ export default function App(){
   const[demoIdx,setDemoIdx]=useState(0);
   const demoPlay=DEMO_PLAYS[demoIdx]||DEMO_PLAYS[0];
   const{games,loading:gamesLoading}=useTodaysGames();
-  const{state:liveState,pitch:livePitch}=useLiveGame(mode==="live"||mode==="signal"?selectedGame:null);
+  const{state:liveState,pitch:livePitch,pitchSequence:livePitchSeq,lastPlayResult:liveLastPlay,recentPlays:liveRecentPlays}=useLiveGame(mode==="live"||mode==="signal"?selectedGame:null);
   const{stats:playerStats,loading:statsLoading}=usePlayerStats(selectedGame,mode);
+  const[showRecentPlays,setShowRecentPlays]=useState(false);
   // Matrix state
   const[mOuts,setMOuts]=useState(0);
   const[mView,setMView]=useState("re");
@@ -994,6 +1033,58 @@ export default function App(){
                             })()}
                             {statsLoading&&<div style={{fontSize:10,color:"#9ca3af",marginTop:2}}>Loading player stats...</div>}
                             <div style={{fontSize:10,color:"#4ade80",marginTop:2}}>Auto-updating every 5s</div>
+
+                            {/* Pitch Sequence Strip */}
+                            {livePitchSeq&&livePitchSeq.length>0&&(
+                              <div style={{marginTop:8}}>
+                                <div style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,marginBottom:4}}>This AB</div>
+                                <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                                  {livePitchSeq.map((p,i)=>{
+                                    const isStrike=["C","S","F","T","W","L","M"].includes(p.callCode);
+                                    const isBall=["B","P","I","H"].includes(p.callCode);
+                                    const isInPlay=["X","D","E"].includes(p.callCode);
+                                    const bg=isInPlay?"#2563eb":isStrike?"#dc2626":isBall?"#16a34a":"#9ca3af";
+                                    return(
+                                      <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",background:bg,borderRadius:4,padding:"2px 5px",minWidth:28}}>
+                                        <div style={{fontSize:8,fontWeight:700,color:"#fff",letterSpacing:.2}}>{p.pitchType||"--"}</div>
+                                        {p.speed&&<div style={{fontSize:7,color:"rgba(255,255,255,.8)",fontFamily:"'SF Mono',Menlo,monospace"}}>{Math.round(p.speed)}</div>}
+                                        <div style={{fontSize:7,color:"rgba(255,255,255,.7)",fontWeight:500}}>{p.callCode}</div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Last Play Result Banner */}
+                            {liveLastPlay&&(
+                              <div style={{marginTop:8,padding:"5px 10px",borderRadius:6,background:liveLastPlay.isOut?"#f3f4f6":"#f0fdf4",border:`1px solid ${liveLastPlay.isOut?"#e5e7eb":"#bbf7d0"}`,fontSize:11,lineHeight:1.4}}>
+                                <span style={{fontWeight:600,color:liveLastPlay.isOut?"#374151":"#16a34a"}}>{lastName(liveLastPlay.batter)}:</span>{" "}
+                                <span style={{color:"#374151"}}>{liveLastPlay.event}{liveLastPlay.rbi>0?` (${liveLastPlay.rbi} RBI)`:""}</span>
+                              </div>
+                            )}
+
+                            {/* Recent Plays Log (Collapsible) */}
+                            {liveRecentPlays&&liveRecentPlays.length>0&&(
+                              <div style={{marginTop:8}}>
+                                <button onClick={()=>setShowRecentPlays(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:10,fontWeight:600,color:"#6b7280",display:"flex",alignItems:"center",gap:4,fontFamily:"inherit"}}>
+                                  <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" style={{transition:"transform .15s",transform:showRecentPlays?"rotate(90deg)":"rotate(0deg)"}}><path d="M2 0l4 4-4 4z"/></svg>
+                                  Recent At-Bats ({liveRecentPlays.length})
+                                </button>
+                                {showRecentPlays&&(
+                                  <div style={{marginTop:4,display:"flex",flexDirection:"column",gap:2}}>
+                                    {liveRecentPlays.map((p,i)=>(
+                                      <div key={p.atBatIndex} style={{padding:"3px 8px",borderRadius:4,fontSize:10,lineHeight:1.4,background:i===0?"#f3f4f6":"transparent",color:"#374151"}}>
+                                        <span style={{fontWeight:600,color:p.isOut?"#9ca3af":"#16a34a",fontVariantNumeric:"tabular-nums"}}>{p.halfInning==="top"?"T":"B"}{p.inning}</span>{" "}
+                                        <span style={{fontWeight:600}}>{lastName(p.batter)}</span>:{" "}
+                                        <span>{p.event}{p.rbi>0?` (${p.rbi} RBI)`:""}</span>
+                                        <span style={{color:"#9ca3af",marginLeft:4,fontFamily:"'SF Mono',Menlo,monospace"}}>{p.count}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
 
