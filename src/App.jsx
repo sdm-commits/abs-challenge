@@ -660,6 +660,7 @@ export default function App(){
   const[tmOuts,setTmOuts]=useState(0);
   const[tmBases,setTmBases]=useState("000");
   const tmFileRef=useRef(null);
+  const[tmDragOver,setTmDragOver]=useState(false);
 
   // WebSocket connect/disconnect handlers
   const tmWsConnect=useCallback(()=>{
@@ -709,9 +710,8 @@ export default function App(){
   // Cleanup websocket on unmount
   useEffect(()=>()=>{if(tmWsRef.current)tmWsRef.current.close();},[]);
 
-  // CSV file handler
-  const handleTmCsvUpload=useCallback((e)=>{
-    const file=e.target.files?.[0];
+  // CSV file handler — shared logic for input and drag-and-drop
+  const loadCsvFile=useCallback((file)=>{
     if(!file)return;
     setTmCsvFileName(file.name);
     const reader=new FileReader();
@@ -720,12 +720,18 @@ export default function App(){
       const mapped=rows.map(mapTrackmanRow).filter(Boolean);
       setTmCsvData(mapped);
       setTmCsvIdx(0);
-      // Set first called pitch as active
       const firstCalled=mapped.find(r=>r.call);
       if(firstCalled)setTmPitch(firstCalled);
     };
     reader.readAsText(file);
   },[]);
+  const handleTmCsvUpload=useCallback((e)=>loadCsvFile(e.target.files?.[0]),[loadCsvFile]);
+  const handleTmCsvDrop=useCallback((e)=>{
+    e.preventDefault();
+    setTmDragOver(false);
+    const file=e.dataTransfer.files?.[0];
+    if(file&&file.name.endsWith(".csv"))loadCsvFile(file);
+  },[loadCsvFile]);
 
   // Matchup multiplier (live and demo mode)
   const matchup=useMemo(()=>{
@@ -1041,9 +1047,15 @@ export default function App(){
                           {trackmanMethod==="csv"&&(
                             <div>
                               <input ref={tmFileRef} type="file" accept=".csv" onChange={handleTmCsvUpload} style={{display:"none"}}/>
-                              <button onClick={()=>tmFileRef.current?.click()} style={{width:"100%",padding:"7px 0",borderRadius:7,border:"1px dashed #d1d5db",cursor:"pointer",fontSize:11,fontWeight:500,background:"#f9fafb",color:"#6b7280",fontFamily:"inherit",marginBottom:6}}>
-                                {tmCsvData?"Replace CSV":"Upload CSV"}
-                              </button>
+                              <div
+                                onClick={()=>tmFileRef.current?.click()}
+                                onDragOver={(e)=>{e.preventDefault();setTmDragOver(true);}}
+                                onDragLeave={()=>setTmDragOver(false)}
+                                onDrop={handleTmCsvDrop}
+                                style={{width:"100%",padding:"14px 0",borderRadius:7,border:`1.5px dashed ${tmDragOver?"#2563eb":"#d1d5db"}`,cursor:"pointer",fontSize:11,fontWeight:500,background:tmDragOver?"#eff6ff":"#f9fafb",color:tmDragOver?"#2563eb":"#6b7280",fontFamily:"inherit",marginBottom:6,textAlign:"center",transition:"all .15s"}}
+                              >
+                                {tmDragOver?"Drop CSV here":tmCsvData?"Replace CSV":"Drop CSV here or click to upload"}
+                              </div>
                               {tmCsvData&&(()=>{
                                 const calledPitches=tmCsvData.filter(r=>r.call);
                                 const totalPitches=tmCsvData.length;
