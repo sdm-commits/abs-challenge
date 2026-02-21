@@ -711,16 +711,17 @@ export default function App(){
   const[showRecentPlays,setShowRecentPlays]=useState(false);
   // Game ticker carousel
   const tickerRef=useRef(null);
-  const tickerDrag=useRef({down:false,startX:0,scrollL:0});
+  const tickerDrag=useRef({down:false,didDrag:false,startX:0,scrollL:0});
   const onTickerDown=useCallback(e=>{
     const el=tickerRef.current;if(!el)return;
-    tickerDrag.current={down:true,startX:e.pageX??e.touches?.[0]?.pageX??0,scrollL:el.scrollLeft};
+    tickerDrag.current={down:true,didDrag:false,startX:e.pageX??e.touches?.[0]?.pageX??0,scrollL:el.scrollLeft};
     el.style.cursor="grabbing";el.style.userSelect="none";
   },[]);
   const onTickerMove=useCallback(e=>{
     if(!tickerDrag.current.down)return;
     const x=e.pageX??e.touches?.[0]?.pageX??0;
     const dx=x-tickerDrag.current.startX;
+    if(Math.abs(dx)>5)tickerDrag.current.didDrag=true;
     tickerRef.current.scrollLeft=tickerDrag.current.scrollL-dx;
   },[]);
   const onTickerUp=useCallback(()=>{
@@ -986,7 +987,7 @@ export default function App(){
                     const isFinal=g.status?.abstractGameState==="Final";
                     const isScheduled=g.status?.abstractGameState==="Preview";
                     return(
-                      <button key={g.gamePk} onClick={e=>{if(Math.abs((e.pageX||0)-tickerDrag.current.startX)>5)return;setSelectedGame(g.gamePk);}} className="game-ticker-btn" style={{
+                      <button key={g.gamePk} onClick={()=>{if(tickerDrag.current.didDrag)return;setSelectedGame(g.gamePk);}} className="game-ticker-btn" style={{
                         background:sel?"#111827":isLive?"#f0fdf4":isFinal?"#f9fafb":"#f3f4f6",
                         color:sel?"#fff":"#374151",
                         borderColor:sel?"#111827":isLive?"#bbf7d0":"transparent",
