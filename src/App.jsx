@@ -563,6 +563,60 @@ function Dots({count,sm}){
 }
 
 // ============================================================
+// CSV PARSER (lightweight, handles quoted fields)
+// ============================================================
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2)return[];
+  const headers=parseCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
+  return lines.slice(1).map(line=>{
+    const vals=parseCSVLine(line);
+    const row={};
+    headers.forEach((h,i)=>{row[h]=vals[i]?.trim()||"";});
+    return row;
+  });
+}
+function parseCSVLine(line){
+  const result=[];let cur="",inQuote=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(inQuote){
+      if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;}
+      else if(ch==='"')inQuote=false;
+      else cur+=ch;
+    }else{
+      if(ch==='"')inQuote=true;
+      else if(ch===","){result.push(cur);cur="";}
+      else cur+=ch;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+function mapTrackmanRow(row){
+  const pX=parseFloat(row.plate_x);
+  const pZ=parseFloat(row.plate_z);
+  const szTop=parseFloat(row.sz_top)||3.5;
+  const szBot=parseFloat(row.sz_bot)||1.6;
+  if(isNaN(pX)||isNaN(pZ))return null;
+  const rawCall=(row.pitch_call||row.call||"").toUpperCase();
+  const call=rawCall==="B"?"ball":rawCall==="C"?"strike":null;
+  const type=row.pitch_type||"";
+  const rawSpeed=row.speed||"";
+  const speed=rawSpeed&&!rawSpeed.includes("mph")?rawSpeed+" mph":rawSpeed;
+  const balls=row.balls!=null&&row.balls!==""?parseInt(row.balls):null;
+  const strikes=row.strikes!=null&&row.strikes!==""?parseInt(row.strikes):null;
+  const outsVal=row.outs!=null&&row.outs!==""?parseInt(row.outs):null;
+  const on1b=row.on_1b!=null&&row.on_1b!==""?(row.on_1b==="1"||row.on_1b.toUpperCase()==="TRUE"?1:0):null;
+  const on2b=row.on_2b!=null&&row.on_2b!==""?(row.on_2b==="1"||row.on_2b.toUpperCase()==="TRUE"?1:0):null;
+  const on3b=row.on_3b!=null&&row.on_3b!==""?(row.on_3b==="1"||row.on_3b.toUpperCase()==="TRUE"?1:0):null;
+  const preCount=balls!=null&&strikes!=null?`${balls}-${strikes}`:null;
+  const preOuts=outsVal!=null?Math.min(outsVal,2):null;
+  const preBases=on1b!=null&&on2b!=null&&on3b!=null?`${on1b}${on2b}${on3b}`:null;
+  return{pX,pZ,szTop,szBot,call,type,speed,preCount,preOuts,preBases,rawCall};
+}
+
+// ============================================================
 // MAIN
 // ============================================================
 const TABS=[{key:"simulator",label:"Simulator"},{key:"matrix",label:"RE Matrix"},{key:"thresholds",label:"Thresholds"},{key:"methodology",label:"Methodology"}];
@@ -588,6 +642,90 @@ export default function App(){
   const[mView,setMView]=useState("re");
   // Manual pitch state (click-to-plot)
   const[manualPitch,setManualPitch]=useState(null); // {pX, pZ}
+
+  // Trackman state
+  const[trackmanActive,setTrackmanActive]=useState(false);
+  const[trackmanMethod,setTrackmanMethod]=useState("paste"); // "paste" | "ws" | "csv"
+  const[tmWsUrl,setTmWsUrl]=useState("");
+  const[tmWsStatus,setTmWsStatus]=useState("disconnected"); // "connected" | "disconnected" | "error"
+  const tmWsRef=useRef(null);
+  const[tmPaste,setTmPaste]=useState({pX:"",pZ:"",szTop:"3.5",szBot:"1.6",call:"strike"});
+  const[tmCsvData,setTmCsvData]=useState(null); // array of mapped rows
+  const[tmCsvIdx,setTmCsvIdx]=useState(0);
+  const[tmCsvView,setTmCsvView]=useState("step"); // "step" | "list"
+  const[tmCsvSort,setTmCsvSort]=useState(null); // {col:"conf"|"dRE",dir:"asc"|"desc"}
+  const[tmCsvFileName,setTmCsvFileName]=useState("");
+  const[tmPitch,setTmPitch]=useState(null); // active pitch from any trackman method
+  const[tmCount,setTmCount]=useState("0-0");
+  const[tmOuts,setTmOuts]=useState(0);
+  const[tmBases,setTmBases]=useState("000");
+  const tmFileRef=useRef(null);
+
+  // WebSocket connect/disconnect handlers
+  const tmWsConnect=useCallback(()=>{
+    if(!tmWsUrl||tmWsRef.current)return;
+    try{
+      const ws=new WebSocket(tmWsUrl);
+      ws.onopen=()=>setTmWsStatus("connected");
+      ws.onclose=()=>{setTmWsStatus("disconnected");tmWsRef.current=null;};
+      ws.onerror=()=>{setTmWsStatus("error");};
+      ws.onmessage=(e)=>{
+        try{
+          const d=JSON.parse(e.data);
+          const pX=parseFloat(d.plate_x);
+          const pZ=parseFloat(d.plate_z);
+          if(isNaN(pX)||isNaN(pZ))return;
+          const szTop=parseFloat(d.sz_top)||3.5;
+          const szBot=parseFloat(d.sz_bot)||1.6;
+          const rawCall=(d.call||"").toUpperCase();
+          const call=rawCall==="B"?"ball":rawCall==="C"?"strike":null;
+          if(!call)return; // skip non-called pitches
+          const type=d.pitch_type||"";
+          const rawSpeed=d.speed||"";
+          const speed=rawSpeed&&!String(rawSpeed).includes("mph")?rawSpeed+" mph":String(rawSpeed);
+          const balls=d.balls!=null?parseInt(d.balls):null;
+          const strikes=d.strikes!=null?parseInt(d.strikes):null;
+          const outsVal=d.outs!=null?parseInt(d.outs):null;
+          const on1b=d.on_1b!=null?(d.on_1b===1||d.on_1b==="1"||d.on_1b===true?1:0):null;
+          const on2b=d.on_2b!=null?(d.on_2b===1||d.on_2b==="1"||d.on_2b===true?1:0):null;
+          const on3b=d.on_3b!=null?(d.on_3b===1||d.on_3b==="1"||d.on_3b===true?1:0):null;
+          const preCount=balls!=null&&strikes!=null?`${balls}-${strikes}`:null;
+          const preOuts=outsVal!=null?Math.min(outsVal,2):null;
+          const preBases=on1b!=null&&on2b!=null&&on3b!=null?`${on1b}${on2b}${on3b}`:null;
+          setTmPitch({pX,pZ,szTop,szBot,call,type,speed,preCount,preOuts,preBases});
+          if(preCount)setTmCount(preCount);
+          if(preOuts!=null)setTmOuts(preOuts);
+          if(preBases)setTmBases(preBases);
+        }catch{}
+      };
+      tmWsRef.current=ws;
+      setTmWsStatus("connected");
+    }catch{setTmWsStatus("error");}
+  },[tmWsUrl]);
+  const tmWsDisconnect=useCallback(()=>{
+    if(tmWsRef.current){tmWsRef.current.close();tmWsRef.current=null;}
+    setTmWsStatus("disconnected");
+  },[]);
+  // Cleanup websocket on unmount
+  useEffect(()=>()=>{if(tmWsRef.current)tmWsRef.current.close();},[]);
+
+  // CSV file handler
+  const handleTmCsvUpload=useCallback((e)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    setTmCsvFileName(file.name);
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      const rows=parseCSV(ev.target.result);
+      const mapped=rows.map(mapTrackmanRow).filter(Boolean);
+      setTmCsvData(mapped);
+      setTmCsvIdx(0);
+      // Set first called pitch as active
+      const firstCalled=mapped.find(r=>r.call);
+      if(firstCalled)setTmPitch(firstCalled);
+    };
+    reader.readAsText(file);
+  },[]);
 
   // Matchup multiplier (live and demo mode)
   const matchup=useMemo(()=>{
@@ -615,9 +753,9 @@ export default function App(){
   // When we have pitch data with a known call, use the PRE-PITCH count for challenge analysis.
   // This lets the engine show K/BB terminal transitions even after the linescore resets.
   const isLive=mode==="live"||mode==="signal";
-  const rawCount=isLive&&liveState?liveState.count:mode==="demo"?demoPlay.count:count;
-  const rawOuts=isLive&&liveState?liveState.outs:mode==="demo"?demoPlay.outs:outs;
-  const rawBases=isLive&&liveState?liveState.bases:mode==="demo"?demoPlay.bases:bs;
+  const rawCount=isLive&&trackmanActive?tmCount:isLive&&liveState?liveState.count:mode==="demo"?demoPlay.count:count;
+  const rawOuts=isLive&&trackmanActive?tmOuts:isLive&&liveState?liveState.outs:mode==="demo"?demoPlay.outs:outs;
+  const rawBases=isLive&&trackmanActive?tmBases:isLive&&liveState?liveState.bases:mode==="demo"?demoPlay.bases:bs;
 
   // Active pitch data for zone card
   // Batting perspective → challenging a called strike
@@ -627,14 +765,17 @@ export default function App(){
       const call=persp==="offense"?"strike":"ball";
       return{pX:manualPitch.pX,pZ:manualPitch.pZ,szTop:3.5,szBot:1.6,call,type:"",speed:""};
     }
-    if((mode==="live"||mode==="signal")&&livePitch){
+    if((mode==="live"||mode==="signal")&&trackmanActive&&tmPitch){
+      return{...tmPitch};
+    }
+    if((mode==="live"||mode==="signal")&&!trackmanActive&&livePitch){
       return{pX:livePitch.pX,pZ:livePitch.pZ,szTop:livePitch.szTop,szBot:livePitch.szBot,call:livePitch.call,type:livePitch.type,speed:livePitch.speed,preCount:livePitch.preCount,preOuts:livePitch.preOuts,preBases:livePitch.preBases,result:livePitch.result};
     }
     if(mode==="demo"&&demoPlay.pitch){
       return{...demoPlay.pitch,preOuts:demoPlay.outs,preBases:demoPlay.bases,result:demoPlay.result};
     }
     return null;
-  },[mode,manualPitch,persp,livePitch,demoPlay]);
+  },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
 
   // Use pre-pitch state for challenge analysis when we have pitch data
   const activeCount=activePitch?.preCount||rawCount;
@@ -735,82 +876,215 @@ export default function App(){
 
                   {(mode==="live"||mode==="signal")&&(
                     <div>
-                      {gamesLoading&&<p style={{fontSize:12,color:"#9ca3af",margin:0}}>Loading today's schedule...</p>}
-                      {!gamesLoading&&liveGames.length===0&&(
-                        <div style={{fontSize:12,color:"#9ca3af",lineHeight:1.6}}>
-                          <p style={{margin:"0 0 6px"}}>No live games right now.</p>
-                          {scheduledGames.length>0&&<p style={{margin:0}}>{scheduledGames.length} game{scheduledGames.length>1?"s":""} scheduled today.</p>}
-                          {games.length===0&&<p style={{margin:0}}>No games scheduled today.</p>}
-                        </div>
-                      )}
-                      {!gamesLoading&&liveGames.length>0&&(
-                        <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                          {liveGames.map(g=>{
-                            const away=g.teams?.away,home=g.teams?.home;
-                            const sel=selectedGame===g.gamePk;
-                            const ls=g.linescore;
-                            return(
-                              <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} style={{
-                                padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",textAlign:"left",
-                                background:sel?"#111827":"#f3f4f6",color:sel?"#fff":"#374151",
-                                transition:"all .15s",fontFamily:"inherit",
-                              }}>
-                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                                  <div style={{fontSize:12,fontWeight:600}}>
-                                    {teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"} @ {teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}
-                                  </div>
-                                  <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                    <div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",animation:"pulse 1.5s infinite"}}/>
-                                    <span style={{fontSize:10,color:sel?"rgba(255,255,255,.6)":"#9ca3af"}}>
-                                      {ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}
-                                    </span>
-                                  </div>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Live state display */}
-                      {liveState&&selectedGame&&(
-                        <div style={{marginTop:10,padding:"8px 10px",background:"#f9fafb",borderRadius:8,fontSize:11,color:"#374151",lineHeight:1.6}}>
-                          <div style={{fontWeight:600}}>
-                            {liveState.isTop?"Top":"Bot"} {liveState.inn} — {liveState.count}, {liveState.outs} out{liveState.outs!==1?"s":""}
+                      {!trackmanActive&&(<>
+                        {gamesLoading&&<p style={{fontSize:12,color:"#9ca3af",margin:0}}>Loading today's schedule...</p>}
+                        {!gamesLoading&&liveGames.length===0&&(
+                          <div style={{fontSize:12,color:"#9ca3af",lineHeight:1.6}}>
+                            <p style={{margin:"0 0 6px"}}>No live games right now.</p>
+                            {scheduledGames.length>0&&<p style={{margin:0}}>{scheduledGames.length} game{scheduledGames.length>1?"s":""} scheduled today.</p>}
+                            {games.length===0&&<p style={{margin:0}}>No games scheduled today.</p>}
                           </div>
-                          {(liveState.batter||liveState.pitcher)&&(()=>{
-                            const bId=liveState.batterId,pId=liveState.pitcherId;
-                            const bSt=bId&&playerStats[bId],pSt=pId&&playerStats[pId];
-                            const bXw=bSt?.xwoba,pXw=pSt?.xwoba;
-                            const bF=bXw?bXw/LG_XWOBA:1,pF=pXw?pXw/LG_XWOBA:1;
-                            const bAdv=bF-1,pAdv=1-pF,diff=bAdv-pAdv,thresh=0.05;
-                            const bEdge=diff>thresh,pEdge=diff<-thresh;
-                            const bBord=bEdge?"#16a34a":pEdge?"#dc2626":"#9ca3af";
-                            const pBord=pEdge?"#16a34a":bEdge?"#dc2626":"#9ca3af";
-                            return <div style={{display:"flex",gap:8,marginTop:6}}>
-                              {bId&&(
-                                <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#f3f4f6",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${bBord}`}}>
-                                  <img src={`${HEADSHOT}${bId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
-                                  <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>AB</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(liveState.batter)}</div>{bXw!=null&&<div style={{fontSize:9,color:bBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{bXw.toFixed(3)} xwOBA</div>}</div>
+                        )}
+                        {!gamesLoading&&liveGames.length>0&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {liveGames.map(g=>{
+                              const away=g.teams?.away,home=g.teams?.home;
+                              const sel=selectedGame===g.gamePk;
+                              const ls=g.linescore;
+                              return(
+                                <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} style={{
+                                  padding:"8px 10px",borderRadius:8,border:"none",cursor:"pointer",textAlign:"left",
+                                  background:sel?"#111827":"#f3f4f6",color:sel?"#fff":"#374151",
+                                  transition:"all .15s",fontFamily:"inherit",
+                                }}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                    <div style={{fontSize:12,fontWeight:600}}>
+                                      {teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"} @ {teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}
+                                    </div>
+                                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                      <div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",animation:"pulse 1.5s infinite"}}/>
+                                      <span style={{fontSize:10,color:sel?"rgba(255,255,255,.6)":"#9ca3af"}}>
+                                        {ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Live state display */}
+                        {liveState&&selectedGame&&(
+                          <div style={{marginTop:10,padding:"8px 10px",background:"#f9fafb",borderRadius:8,fontSize:11,color:"#374151",lineHeight:1.6}}>
+                            <div style={{fontWeight:600}}>
+                              {liveState.isTop?"Top":"Bot"} {liveState.inn} — {liveState.count}, {liveState.outs} out{liveState.outs!==1?"s":""}
+                            </div>
+                            {(liveState.batter||liveState.pitcher)&&(()=>{
+                              const bId=liveState.batterId,pId=liveState.pitcherId;
+                              const bSt=bId&&playerStats[bId],pSt=pId&&playerStats[pId];
+                              const bXw=bSt?.xwoba,pXw=pSt?.xwoba;
+                              const bF=bXw?bXw/LG_XWOBA:1,pF=pXw?pXw/LG_XWOBA:1;
+                              const bAdv=bF-1,pAdv=1-pF,diff=bAdv-pAdv,thresh=0.05;
+                              const bEdge=diff>thresh,pEdge=diff<-thresh;
+                              const bBord=bEdge?"#16a34a":pEdge?"#dc2626":"#9ca3af";
+                              const pBord=pEdge?"#16a34a":bEdge?"#dc2626":"#9ca3af";
+                              return <div style={{display:"flex",gap:8,marginTop:6}}>
+                                {bId&&(
+                                  <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#f3f4f6",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${bBord}`}}>
+                                    <img src={`${HEADSHOT}${bId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
+                                    <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>AB</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(liveState.batter)}</div>{bXw!=null&&<div style={{fontSize:9,color:bBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{bXw.toFixed(3)} xwOBA</div>}</div>
+                                  </div>
+                                )}
+                                {pId&&(
+                                  <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#f3f4f6",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${pBord}`}}>
+                                    <img src={`${HEADSHOT}${pId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
+                                    <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>P</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(liveState.pitcher)}</div>{pXw!=null&&<div style={{fontSize:9,color:pBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{pXw.toFixed(3)} xwOBA</div>}</div>
+                                  </div>
+                                )}
+                              </div>;
+                            })()}
+                            {matchup.mult!==1&&(()=>{
+                              const pct=(matchup.mult-1)*100;
+                              const col=pct>0?"#16a34a":"#dc2626";
+                              return <div style={{marginTop:4,padding:"4px 6px",background:pct>0?"#f9fafb":"#fef2f2",borderRadius:4,fontSize:10}}>
+                                <span style={{fontWeight:600,color:col}}>Matchup: {pct>0?"+":""}{pct.toFixed(0)}% ΔRE</span>
+                              </div>;
+                            })()}
+                            {statsLoading&&<div style={{fontSize:10,color:"#9ca3af",marginTop:2}}>Loading player stats...</div>}
+                            <div style={{fontSize:10,color:"#4ade80",marginTop:2}}>Auto-updating every 5s</div>
+                          </div>
+                        )}
+
+                        {/* Trackman toggle link */}
+                        <button onClick={()=>{setTrackmanActive(true);setSelectedGame(null);}} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:"#2563eb",fontFamily:"inherit",padding:"8px 0 0",display:"flex",alignItems:"center",gap:4}}>
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/><path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                          Use custom pitch data
+                        </button>
+                      </>)}
+
+                      {/* === TRACKMAN INPUT PANEL === */}
+                      {trackmanActive&&(
+                        <div>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                            <div style={{fontSize:11,fontWeight:600,color:"#111827"}}>Trackman / Custom Data</div>
+                            <button onClick={()=>setTrackmanActive(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:"#9ca3af",fontFamily:"inherit",padding:0}}>Back to MLB games</button>
+                          </div>
+
+                          {/* Method tabs */}
+                          <div style={{display:"flex",gap:3,marginBottom:10}}>
+                            {[["paste","Paste"],["ws","WebSocket"],["csv","CSV"]].map(([k,l])=>(
+                              <button key={k} onClick={()=>setTrackmanMethod(k)} style={{...seg(trackmanMethod===k),fontSize:10,padding:"4px 0"}}>{l}</button>
+                            ))}
+                          </div>
+
+                          {/* PASTE METHOD */}
+                          {trackmanMethod==="paste"&&(
+                            <div>
+                              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+                                <div>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>plate_x</label>
+                                  <input type="number" step="0.001" value={tmPaste.pX} onChange={e=>setTmPaste(p=>({...p,pX:e.target.value}))} placeholder="0.00" style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
+                                </div>
+                                <div>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>plate_z</label>
+                                  <input type="number" step="0.001" value={tmPaste.pZ} onChange={e=>setTmPaste(p=>({...p,pZ:e.target.value}))} placeholder="0.00" style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
+                                </div>
+                                <div>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>sz_top</label>
+                                  <input type="number" step="0.01" value={tmPaste.szTop} onChange={e=>setTmPaste(p=>({...p,szTop:e.target.value}))} style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
+                                </div>
+                                <div>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>sz_bot</label>
+                                  <input type="number" step="0.01" value={tmPaste.szBot} onChange={e=>setTmPaste(p=>({...p,szBot:e.target.value}))} style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
+                                </div>
+                              </div>
+                              <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:3}}>Call</label>
+                              <div style={{display:"flex",gap:3,marginBottom:8}}>
+                                <button onClick={()=>setTmPaste(p=>({...p,call:"ball"}))} style={{...seg(tmPaste.call==="ball"),fontSize:11,padding:"5px 0",background:tmPaste.call==="ball"?"#16a34a":"#f3f4f6",color:tmPaste.call==="ball"?"#fff":"#6b7280"}}>Ball</button>
+                                <button onClick={()=>setTmPaste(p=>({...p,call:"strike"}))} style={{...seg(tmPaste.call==="strike"),fontSize:11,padding:"5px 0",background:tmPaste.call==="strike"?"#dc2626":"#f3f4f6",color:tmPaste.call==="strike"?"#fff":"#6b7280"}}>Strike</button>
+                              </div>
+                              <button onClick={()=>{
+                                const pX=parseFloat(tmPaste.pX),pZ=parseFloat(tmPaste.pZ);
+                                if(isNaN(pX)||isNaN(pZ))return;
+                                const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
+                                setTmPitch({pX,pZ,szTop,szBot,call:tmPaste.call,type:"",speed:"",preCount:tmCount,preOuts:tmOuts,preBases:tmBases});
+                              }} style={{width:"100%",padding:"7px 0",borderRadius:7,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:"#111827",color:"#fff",fontFamily:"inherit"}}>Analyze</button>
+                            </div>
+                          )}
+
+                          {/* WEBSOCKET METHOD */}
+                          {trackmanMethod==="ws"&&(
+                            <div>
+                              <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>WebSocket URL</label>
+                              <input type="text" value={tmWsUrl} onChange={e=>setTmWsUrl(e.target.value)} placeholder="ws://localhost:8080" style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:11,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937",marginBottom:6}}/>
+                              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                                {tmWsStatus!=="connected"?(
+                                  <button onClick={tmWsConnect} disabled={!tmWsUrl} style={{padding:"6px 14px",borderRadius:7,border:"none",cursor:tmWsUrl?"pointer":"default",fontSize:11,fontWeight:600,background:tmWsUrl?"#111827":"#e5e7eb",color:tmWsUrl?"#fff":"#9ca3af",fontFamily:"inherit"}}>Connect</button>
+                                ):(
+                                  <button onClick={tmWsDisconnect} style={{padding:"6px 14px",borderRadius:7,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:"#dc2626",color:"#fff",fontFamily:"inherit"}}>Disconnect</button>
+                                )}
+                                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                  <div style={{width:7,height:7,borderRadius:"50%",background:tmWsStatus==="connected"?"#22c55e":tmWsStatus==="error"?"#dc2626":"#9ca3af",animation:tmWsStatus==="connected"?"pulse 1.5s infinite":"none"}}/>
+                                  <span style={{fontSize:10,color:tmWsStatus==="connected"?"#22c55e":tmWsStatus==="error"?"#dc2626":"#9ca3af",fontWeight:500,textTransform:"capitalize"}}>{tmWsStatus}</span>
+                                </div>
+                              </div>
+                              {tmWsStatus==="connected"&&tmPitch&&(
+                                <div style={{marginTop:8,padding:"6px 8px",background:"#f0fdf4",borderRadius:6,fontSize:10,color:"#16a34a",fontWeight:500}}>
+                                  Last pitch: {tmPitch.call} at ({tmPitch.pX.toFixed(3)}, {tmPitch.pZ.toFixed(3)})
                                 </div>
                               )}
-                              {pId&&(
-                                <div style={{display:"flex",alignItems:"center",gap:6,flex:1,background:"#f3f4f6",borderRadius:6,padding:"4px 6px",borderLeft:`3px solid ${pBord}`}}>
-                                  <img src={`${HEADSHOT}${pId}.png`} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover",flexShrink:0}} onError={e=>{e.target.style.display="none"}}/>
-                                  <div style={{minWidth:0}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3}}>P</div><div style={{fontSize:10,fontWeight:600,color:"#374151",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{lastName(liveState.pitcher)}</div>{pXw!=null&&<div style={{fontSize:9,color:pBord,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{pXw.toFixed(3)} xwOBA</div>}</div>
-                                </div>
-                              )}
-                            </div>;
-                          })()}
-                          {matchup.mult!==1&&(()=>{
-                            const pct=(matchup.mult-1)*100;
-                            const col=pct>0?"#16a34a":"#dc2626";
-                            return <div style={{marginTop:4,padding:"4px 6px",background:pct>0?"#f9fafb":"#fef2f2",borderRadius:4,fontSize:10}}>
-                              <span style={{fontWeight:600,color:col}}>Matchup: {pct>0?"+":""}{pct.toFixed(0)}% ΔRE</span>
-                            </div>;
-                          })()}
-                          {statsLoading&&<div style={{fontSize:10,color:"#9ca3af",marginTop:2}}>Loading player stats...</div>}
-                          <div style={{fontSize:10,color:"#4ade80",marginTop:2}}>Auto-updating every 5s</div>
+                            </div>
+                          )}
+
+                          {/* CSV METHOD */}
+                          {trackmanMethod==="csv"&&(
+                            <div>
+                              <input ref={tmFileRef} type="file" accept=".csv" onChange={handleTmCsvUpload} style={{display:"none"}}/>
+                              <button onClick={()=>tmFileRef.current?.click()} style={{width:"100%",padding:"7px 0",borderRadius:7,border:"1px dashed #d1d5db",cursor:"pointer",fontSize:11,fontWeight:500,background:"#f9fafb",color:"#6b7280",fontFamily:"inherit",marginBottom:6}}>
+                                {tmCsvData?"Replace CSV":"Upload CSV"}
+                              </button>
+                              {tmCsvData&&(()=>{
+                                const calledPitches=tmCsvData.filter(r=>r.call);
+                                const totalPitches=tmCsvData.length;
+                                return(
+                                  <div>
+                                    <div style={{fontSize:10,color:"#6b7280",marginBottom:6}}>
+                                      <span style={{fontWeight:600}}>{tmCsvFileName}</span> — {totalPitches} pitch{totalPitches!==1?"es":""} ({calledPitches.length} called)
+                                    </div>
+                                    <div style={{display:"flex",gap:3,marginBottom:8}}>
+                                      <button onClick={()=>setTmCsvView("step")} style={{...seg(tmCsvView==="step"),fontSize:10,padding:"4px 0"}}>Step Through</button>
+                                      <button onClick={()=>setTmCsvView("list")} style={{...seg(tmCsvView==="list"),fontSize:10,padding:"4px 0"}}>List View</button>
+                                    </div>
+                                    {tmCsvView==="step"&&(
+                                      <div>
+                                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                                          <button onClick={()=>{const ni=Math.max(0,tmCsvIdx-1);setTmCsvIdx(ni);const p=tmCsvData[ni];if(p)setTmPitch({...p,preCount:p.preCount||tmCount,preOuts:p.preOuts??tmOuts,preBases:p.preBases||tmBases});}} disabled={tmCsvIdx===0} style={{width:28,height:28,borderRadius:6,border:"1px solid #e5e7eb",background:tmCsvIdx===0?"#f9fafb":"#fff",color:tmCsvIdx===0?"#d1d5db":"#374151",cursor:tmCsvIdx===0?"default":"pointer",fontSize:14,fontWeight:700,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center"}}>&#8249;</button>
+                                          <div style={{flex:1,textAlign:"center",fontSize:10,color:"#9ca3af",fontWeight:500}}>{tmCsvIdx+1} / {tmCsvData.length}</div>
+                                          <button onClick={()=>{const ni=Math.min(tmCsvData.length-1,tmCsvIdx+1);setTmCsvIdx(ni);const p=tmCsvData[ni];if(p)setTmPitch({...p,preCount:p.preCount||tmCount,preOuts:p.preOuts??tmOuts,preBases:p.preBases||tmBases});}} disabled={tmCsvIdx>=tmCsvData.length-1} style={{width:28,height:28,borderRadius:6,border:"1px solid #e5e7eb",background:tmCsvIdx>=tmCsvData.length-1?"#f9fafb":"#fff",color:tmCsvIdx>=tmCsvData.length-1?"#d1d5db":"#374151",cursor:tmCsvIdx>=tmCsvData.length-1?"default":"pointer",fontSize:14,fontWeight:700,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center"}}>&#8250;</button>
+                                        </div>
+                                        {tmCsvData[tmCsvIdx]&&(
+                                          <div style={{fontSize:10,color:"#6b7280",background:"#f9fafb",borderRadius:6,padding:"4px 8px"}}>
+                                            {tmCsvData[tmCsvIdx].call?<span style={{fontWeight:600,color:tmCsvData[tmCsvIdx].call==="strike"?"#dc2626":"#16a34a",textTransform:"uppercase"}}>Called {tmCsvData[tmCsvIdx].call}</span>:<span style={{color:"#d1d5db"}}>No called pitch</span>}
+                                            {tmCsvData[tmCsvIdx].type&&<span> · {tmCsvData[tmCsvIdx].type}</span>}
+                                            {tmCsvData[tmCsvIdx].speed&&<span> {tmCsvData[tmCsvIdx].speed}</span>}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
+                          {/* WebSocket status indicator when not on WS tab */}
+                          {trackmanMethod!=="ws"&&tmWsStatus==="connected"&&(
+                            <div style={{marginTop:6,display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#22c55e"}}>
+                              <div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",animation:"pulse 1.5s infinite"}}/>
+                              WebSocket connected
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -876,6 +1150,11 @@ export default function App(){
                           <button key={i} onClick={()=>toggleBase(i)} style={{padding:"2px 6px",borderRadius:5,fontSize:9,fontWeight:600,cursor:"pointer",border:"none",background:bs[i]==="1"?"#fef2f2":"#f3f4f6",color:bs[i]==="1"?"#ef4444":"#9ca3af",transition:"all .15s"}}>{l}</button>
                         ))}
                       </div>}
+                      {isLive&&trackmanActive&&!(tmPitch?.preBases)&&<div style={{display:"flex",gap:3,justifyContent:"center",marginTop:4}}>
+                        {["1B","2B","3B"].map((l,i)=>(
+                          <button key={i} onClick={()=>setTmBases(p=>{const a=p.split("");a[i]=a[i]==="1"?"0":"1";return a.join("")})} style={{padding:"2px 6px",borderRadius:5,fontSize:9,fontWeight:600,cursor:"pointer",border:"none",background:tmBases[i]==="1"?"#fef2f2":"#f3f4f6",color:tmBases[i]==="1"?"#ef4444":"#9ca3af",transition:"all .15s"}}>{l}</button>
+                        ))}
+                      </div>}
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:5}}>
                       <Dots count={activeCount}/>
@@ -922,16 +1201,26 @@ export default function App(){
                       {[0,1,2].map(o=><button key={o} onClick={()=>setOuts(o)} style={seg(outs===o)}>{o}</button>)}
                     </div>
                   </>)}
-                  {mode==="live"&&!liveState&&selectedGame&&(
+                  {isLive&&trackmanActive&&!(tmPitch?.preCount)&&(<>
+                    <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Count</label>
+                    <div className="count-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:3,marginBottom:12}}>
+                      {COUNTS.map(c=><button key={c} onClick={()=>setTmCount(c)} style={{...seg(tmCount===c),padding:"5px 0",fontSize:11,borderRadius:6}}>{c}</button>)}
+                    </div>
+                    <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Outs</label>
+                    <div style={{display:"flex",gap:3}}>
+                      {[0,1,2].map(o=><button key={o} onClick={()=>setTmOuts(o)} style={seg(tmOuts===o)}>{o}</button>)}
+                    </div>
+                  </>)}
+                  {mode==="live"&&!trackmanActive&&!liveState&&selectedGame&&(
                     <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Connecting to game feed...</p>
                   )}
-                  {mode==="live"&&!selectedGame&&(
+                  {mode==="live"&&!trackmanActive&&!selectedGame&&(
                     <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Select a live game above.</p>
                   )}
-                  {mode==="signal"&&!liveState&&selectedGame&&(
+                  {mode==="signal"&&!trackmanActive&&!liveState&&selectedGame&&(
                     <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Connecting to game feed...</p>
                   )}
-                  {mode==="signal"&&!selectedGame&&(
+                  {mode==="signal"&&!trackmanActive&&!selectedGame&&(
                     <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Select a live game above.</p>
                   )}
                 </div>
@@ -940,7 +1229,7 @@ export default function App(){
               {/* === CONTEXT === */}
               <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
                 <div style={{padding:16}}>
-                  {isLive&&liveState&&(
+                  {isLive&&!trackmanActive&&liveState&&(
                     <div style={{display:"flex",gap:12,marginBottom:10,fontSize:12,color:"#6b7280"}}>
                       <span>{liveState.isTop?"Top":"Bot"} {liveState.inn}</span>
                       <span>{awayAbbr} {liveState.away} – {homeAbbr} {liveState.home}</span>
@@ -961,7 +1250,7 @@ export default function App(){
             <div style={{minHeight:120}}>
               {mode==="signal"&&(()=>{
                 // Signal mode: big color block
-                if(!liveState||!selectedGame)return(
+                if(!trackmanActive&&(!liveState||!selectedGame))return(
                   <div style={{background:"#f3f4f6",borderRadius:16,padding:64,textAlign:"center",color:"#9ca3af",fontSize:15}}>
                     Select a live game to start
                   </div>
@@ -1002,6 +1291,31 @@ export default function App(){
                   </div>
                 );
               })()}
+              {/* Coordinate readout for trackman */}
+              {isLive&&trackmanActive&&activePitch&&(
+                <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,padding:"6px 10px",marginBottom:10,fontFamily:"'SF Mono',Menlo,monospace",fontSize:11,color:"#374151",display:"flex",gap:12,flexWrap:"wrap"}}>
+                  <span>pX: <b>{activePitch.pX.toFixed(3)}</b></span>
+                  <span>pZ: <b>{activePitch.pZ.toFixed(3)}</b></span>
+                  <span>szTop: <b>{activePitch.szTop.toFixed(2)}</b></span>
+                  <span>szBot: <b>{activePitch.szBot.toFixed(2)}</b></span>
+                </div>
+              )}
+
+              {/* CSV List View */}
+              {isLive&&trackmanActive&&trackmanMethod==="csv"&&tmCsvView==="list"&&tmCsvData&&(
+                <CsvListView
+                  data={tmCsvData}
+                  selectedIdx={tmCsvIdx}
+                  onSelect={(idx)=>{setTmCsvIdx(idx);const p=tmCsvData[idx];if(p)setTmPitch({...p,preCount:p.preCount||tmCount,preOuts:p.preOuts??tmOuts,preBases:p.preBases||tmBases});}}
+                  persp={persp}
+                  tmCount={tmCount}
+                  tmOuts={tmOuts}
+                  tmBases={tmBases}
+                  sort={tmCsvSort}
+                  onSort={setTmCsvSort}
+                />
+              )}
+
               {mode==="manual"&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
@@ -1010,7 +1324,20 @@ export default function App(){
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
+              {/* Trackman paste/ws/csv-step zone card */}
+              {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
+                pitch={activePitch}
+                thresh={analysis.thresh}
+                persp={persp}
+                interactive={trackmanMethod==="paste"}
+                onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
+                  const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
+                  setTmPitch({pX,pZ,szTop,szBot,call:tmPaste.call,type:"",speed:"",preCount:tmCount,preOuts:tmOuts,preBases:tmBases});
+                  setTmPaste(p=>({...p,pX:pX.toFixed(3),pZ:pZ.toFixed(3)}));
+                }:undefined}
+                onClear={trackmanMethod==="paste"?()=>setTmPitch(null):undefined}
+              />}
               {mode!=="signal"&&matchup.mult!==1&&analysis?.results?.length>0&&(()=>{
                 const mpct=(matchup.mult-1)*100;
                 const col=mpct>0?"#16a34a":mpct<0?"#dc2626":"#6b7280";
@@ -1024,7 +1351,7 @@ export default function App(){
               }).map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} persp={persp} mode={mode}/>)}
               {mode!=="signal"&&(!analysis||analysis.results.length===0)&&(
                 <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:32,textAlign:"center",color:"#9ca3af",fontSize:13}}>
-                  {isLive&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
+                  {isLive&&trackmanActive?"Analyze a pitch to see challenge data.":isLive&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
                 </div>
               )}
             </div>
@@ -1034,6 +1361,108 @@ export default function App(){
         {tab==="matrix"&&<MatrixView {...{mOuts,setMOuts,mView,setMView}} seg={(active)=>({padding:"5px 14px",borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"})}/>}
         {tab==="thresholds"&&<ThresholdMatrix/>}
         {tab==="methodology"&&<Methodology/>}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// CSV LIST VIEW
+// ============================================================
+function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sort,onSort}){
+  const green="#16a34a",red="#dc2626",yellow="#eab308";
+  // Compute analysis for each row
+  const rows=useMemo(()=>data.map((row,i)=>{
+    if(!row.call)return{...row,idx:i,verdict:null,conf:null,dRE:null,thresh:null};
+    const c=row.preCount||tmCount;
+    const o=row.preOuts??tmOuts;
+    const b=row.preBases||tmBases;
+    if(!RE[o]?.[b]?.[c])return{...row,idx:i,verdict:"—",conf:null,dRE:null,thresh:null};
+    const dist=getDistFromZone(row.pX,row.pZ,row.szTop,row.szBot);
+    const pOutside=confidenceFromDist(dist);
+    const conf=row.call==="strike"?pOutside:100-pOutside;
+    const challengerPersp=row.call==="strike"?"offense":"defense";
+    const canChallenge=persp===challengerPersp;
+    const[balls,strikes]=c.split("-").map(Number);
+    const thresh=getTangoThresh(b,o,balls,strikes);
+    const trans=getTrans(c,o,b);
+    const relevantTrans=row.call==="ball"?trans.find(t=>t.type==="b2s"):trans.find(t=>t.type==="s2b");
+    let dRE=null;
+    if(relevantTrans){
+      const cur=RE[o][b][c];
+      let cor;
+      if(relevantTrans.terminal){
+        if(relevantTrans.newOuts>=3)cor=0;
+        else cor=(RE[relevantTrans.newOuts]?.[relevantTrans.newBases]?.["0-0"]??null);
+        if(cor!==null)cor=cor+relevantTrans.runs;
+      }else{
+        cor=RE[o]?.[b]?.[relevantTrans.to];
+      }
+      if(cor!=null&&cur!=null)dRE=Math.abs(cor-cur);
+    }
+    const MARGIN=15;
+    const gap=conf-thresh;
+    let verdict;
+    if(!canChallenge)verdict="—";
+    else if(gap>=MARGIN)verdict="CHALLENGE";
+    else if(gap<=-MARGIN)verdict="HOLD";
+    else verdict="CLOSE";
+    return{...row,idx:i,verdict,conf,dRE,thresh,canChallenge};
+  }),[data,persp,tmCount,tmOuts,tmBases]);
+
+  const sorted=useMemo(()=>{
+    if(!sort)return rows;
+    const s=[...rows];
+    s.sort((a,b)=>{
+      const av=sort.col==="conf"?a.conf:a.dRE;
+      const bv=sort.col==="conf"?b.conf:b.dRE;
+      if(av==null&&bv==null)return 0;
+      if(av==null)return 1;
+      if(bv==null)return -1;
+      return sort.dir==="asc"?av-bv:bv-av;
+    });
+    return s;
+  },[rows,sort]);
+
+  const handleSort=(col)=>{
+    if(sort?.col===col)onSort({col,dir:sort.dir==="asc"?"desc":"asc"});
+    else onSort({col,dir:"desc"});
+  };
+  const sortArrow=(col)=>sort?.col===col?(sort.dir==="asc"?" \u25B2":" \u25BC"):"";
+
+  return(
+    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"hidden"}}>
+      <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch",maxHeight:400,overflowY:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:500}}>
+          <thead><tr style={{position:"sticky",top:0,background:"#fff",zIndex:1}}>
+            <th style={{padding:"6px 8px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb",width:30}}>#</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb"}}>pX</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb"}}>pZ</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb"}}>Call</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb"}}>Type</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb"}}>Speed</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb",cursor:"pointer",userSelect:"none"}} onClick={()=>handleSort("conf")}>Conf{sortArrow("conf")}</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb"}}>Verdict</th>
+            <th style={{padding:"6px 6px",textAlign:"center",fontSize:9,fontWeight:600,color:"#9ca3af",borderBottom:"1px solid #e5e7eb",cursor:"pointer",userSelect:"none"}} onClick={()=>handleSort("dRE")}>{"\u0394"}RE{sortArrow("dRE")}</th>
+          </tr></thead>
+          <tbody>{sorted.map(row=>{
+            const isSel=row.idx===selectedIdx;
+            const noCalled=!row.call;
+            return(
+              <tr key={row.idx} onClick={()=>row.call&&onSelect(row.idx)} style={{cursor:row.call?"pointer":"default",background:isSel?"#f0f9ff":noCalled?"#fafafa":"#fff",opacity:noCalled?0.4:1,transition:"background .1s"}}>
+                <td style={{padding:"4px 8px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",color:"#9ca3af",fontWeight:500}}>{row.idx+1}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontFamily:"'SF Mono',Menlo,monospace",fontVariantNumeric:"tabular-nums"}}>{row.pX.toFixed(3)}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontFamily:"'SF Mono',Menlo,monospace",fontVariantNumeric:"tabular-nums"}}>{row.pZ.toFixed(3)}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontWeight:600,color:noCalled?"#d1d5db":row.call==="strike"?red:green}}>{noCalled?row.rawCall||"—":row.call==="strike"?"STR":"BALL"}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",color:"#6b7280"}}>{row.type||"—"}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",color:"#6b7280"}}>{row.speed||"—"}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{row.conf!=null?`${row.conf}%`:"—"}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontWeight:700,color:row.verdict==="CHALLENGE"?green:row.verdict==="HOLD"?red:row.verdict==="CLOSE"?yellow:"#d1d5db"}}>{noCalled?"No called pitch":row.verdict||"—"}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontVariantNumeric:"tabular-nums",fontFamily:"'SF Mono',Menlo,monospace"}}>{row.dRE!=null?row.dRE.toFixed(3):"—"}</td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
       </div>
     </div>
   );
