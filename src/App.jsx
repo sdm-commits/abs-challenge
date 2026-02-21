@@ -286,16 +286,19 @@ function useTodaysGames(){
 
 function useLiveGame(gamePk){
   const[state,setState]=useState(null);
+  const[pitch,setPitch]=useState(null);
   const[err,setErr]=useState(null);
   const timeoutRef=useRef(null);
+  const prevKey=useRef(null); // track count+outs+inning to detect changes
+  const lastPitchId=useRef(null);
 
   useEffect(()=>{
-    if(!gamePk){setState(null);setErr(null);return;}
+    if(!gamePk){setState(null);setPitch(null);setErr(null);prevKey.current=null;lastPitchId.current=null;return;}
     let cancelled=false;
     async function poll(){
       try{
         const controller=new AbortController();
-        const tid=setTimeout(()=>controller.abort(),8000); // 8s timeout
+        const tid=setTimeout(()=>controller.abort(),8000);
         const res=await fetch(`${API}/game/${gamePk}/linescore`,{signal:controller.signal});
         clearTimeout(tid);
         if(!res.ok)throw new Error("Linescore fetch failed");
@@ -306,7 +309,6 @@ function useLiveGame(gamePk){
         const inn=d.currentInning??1;
         const isTop=d.isTopInning??true;
         const away=d.teams?.away?.runs??0,home=d.teams?.home?.runs??0;
-        // Base runners
         const first=d.offense?.first?1:0;
         const second=d.offense?.second?1:0;
         const third=d.offense?.third?1:0;
@@ -322,66 +324,54 @@ function useLiveGame(gamePk){
           batter,pitcher,batterId,pitcherId,
         });
         setErr(null);
-      }catch(e){if(!cancelled)setErr(e.name==="AbortError"?"Connection timed out":e.message)}
-      finally{if(!cancelled)timeoutRef.current=setTimeout(poll,5000);} // schedule next poll after completion
-    }
-    poll();
-    return()=>{cancelled=true;clearTimeout(timeoutRef.current)};
-  },[gamePk]);
 
-  return{state,err};
-}
-
-function useLivePitch(gamePk){
-  const[pitch,setPitch]=useState(null);
-  const lastPitchId=useRef(null);
-  const timeoutRef=useRef(null);
-
-  useEffect(()=>{
-    if(!gamePk){setPitch(null);lastPitchId.current=null;return;}
-    let cancelled=false;
-    async function poll(){
-      try{
-        const controller=new AbortController();
-        const tid=setTimeout(()=>controller.abort(),10000);
-        const res=await fetch(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`,{signal:controller.signal});
-        clearTimeout(tid);
-        if(!res.ok||cancelled)return;
-        const d=await res.json();
-        const events=d.liveData?.plays?.currentPlay?.playEvents;
-        if(!events||events.length===0){if(!cancelled)setPitch(null);return;}
-        // Find last actual pitch (isPitch === true)
-        let lastPitch=null;
-        for(let i=events.length-1;i>=0;i--){
-          if(events[i].isPitch){lastPitch=events[i];break;}
+        // Detect state change → fetch pitch data from feed/live
+        const key=`${inn}-${isTop}-${balls}-${strikes}-${outs_val}`;
+        if(key!==prevKey.current){
+          prevKey.current=key;
+          try{
+            const ctrl2=new AbortController();
+            const tid2=setTimeout(()=>ctrl2.abort(),10000);
+            const res2=await fetch(`https://statsapi.mlb.com/api/v1.1/game/${gamePk}/feed/live`,{signal:ctrl2.signal});
+            clearTimeout(tid2);
+            if(res2.ok&&!cancelled){
+              const fd=await res2.json();
+              const events=fd.liveData?.plays?.currentPlay?.playEvents;
+              if(events&&events.length>0){
+                let lastP=null;
+                for(let i=events.length-1;i>=0;i--){if(events[i].isPitch){lastP=events[i];break;}}
+                if(lastP){
+                  const pitchId=`${fd.liveData?.plays?.currentPlay?.atBatIndex}-${lastP.index}`;
+                  if(pitchId!==lastPitchId.current){
+                    lastPitchId.current=pitchId;
+                    const callCode=lastP.details?.call?.code;
+                    if(callCode==="C"||callCode==="B"){
+                      const pX=lastP.pitchData?.coordinates?.pX;
+                      const pZ=lastP.pitchData?.coordinates?.pZ;
+                      if(pX!=null&&pZ!=null){
+                        setPitch({pX,pZ,
+                          szTop:lastP.pitchData?.strikeZoneTop??3.5,
+                          szBot:lastP.pitchData?.strikeZoneBottom??1.6,
+                          call:callCode==="C"?"strike":"ball",
+                          type:lastP.details?.type?.description||lastP.details?.type?.code||"",
+                          speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
+                        });
+                      }else{setPitch(null);}
+                    }else{setPitch(null);}
+                  }
+                }
+              }else{setPitch(null);}
+            }
+          }catch(e){/* pitch fetch failed, keep going */}
         }
-        if(!lastPitch||cancelled)return;
-        // Deduplicate — skip if same pitch index
-        const pitchId=`${d.liveData?.plays?.currentPlay?.atBatIndex}-${lastPitch.index}`;
-        if(pitchId===lastPitchId.current)return;
-        lastPitchId.current=pitchId;
-        // Only show zone card for called balls and called strikes
-        const callCode=lastPitch.details?.call?.code; // "C" = called strike, "B" = ball
-        if(callCode!=="C"&&callCode!=="B"){setPitch(null);return;}
-        const pX=lastPitch.pitchData?.coordinates?.pX;
-        const pZ=lastPitch.pitchData?.coordinates?.pZ;
-        if(pX==null||pZ==null){setPitch(null);return;}
-        setPitch({
-          pX,pZ,
-          szTop:lastPitch.pitchData?.strikeZoneTop??3.5,
-          szBot:lastPitch.pitchData?.strikeZoneBottom??1.6,
-          call:callCode==="C"?"strike":"ball",
-          type:lastPitch.details?.type?.description||lastPitch.details?.type?.code||"",
-          speed:lastPitch.pitchData?.startSpeed?`${Math.round(lastPitch.pitchData.startSpeed)} mph`:"",
-        });
-      }catch(e){/* ignore — linescore poll handles errors */}
-      finally{if(!cancelled)timeoutRef.current=setTimeout(poll,8000);}
+      }catch(e){if(!cancelled)setErr(e.name==="AbortError"?"Connection timed out":e.message)}
+      finally{if(!cancelled)timeoutRef.current=setTimeout(poll,5000);}
     }
     poll();
     return()=>{cancelled=true;clearTimeout(timeoutRef.current)};
   },[gamePk]);
 
-  return pitch;
+  return{state,pitch,err};
 }
 
 // ============================================================
@@ -565,8 +555,7 @@ export default function App(){
   const[demoIdx,setDemoIdx]=useState(0);
   const demoPlay=DEMO_PLAYS[demoIdx]||DEMO_PLAYS[0];
   const{games,loading:gamesLoading}=useTodaysGames();
-  const{state:liveState}=useLiveGame(mode==="live"?selectedGame:null);
-  const livePitch=useLivePitch(mode==="live"?selectedGame:null);
+  const{state:liveState,pitch:livePitch}=useLiveGame(mode==="live"?selectedGame:null);
   const{stats:playerStats,loading:statsLoading}=usePlayerStats(selectedGame,mode);
   // Matrix state
   const[mOuts,setMOuts]=useState(0);
