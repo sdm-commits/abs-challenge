@@ -444,7 +444,7 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
       {hasPitch&&!inside&&<line x1={px} y1={py} x2={ex} y2={ey} stroke={lineColor} strokeWidth={1} strokeDasharray="2 1.5" opacity={0.7}/>}
       {hasPitch&&!inside&&Math.abs(dist)>1&&<text x={(px+ex)/2+6} y={(py+ey)/2-1} fill={lineColor} fontSize={7} fontWeight={700} fontFamily="monospace">{dist.toFixed(1)}"</text>}
       {hasPitch&&<circle cx={px} cy={py} r={4} fill={dotColor} opacity={0.9} stroke="#fff" strokeWidth={1}/>}
-      {interactive&&!hasPitch&&<text x={W/2} y={H/2} textAnchor="middle" fontSize={9} fill="#d1d5db">Click to plot</text>}
+      {interactive&&!hasPitch&&<text x={W/2} y={H/2} textAnchor="middle" fontSize={8} fill="#d1d5db">Tap zone</text>}
     </svg>
   );
 }
