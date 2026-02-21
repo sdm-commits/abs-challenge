@@ -496,7 +496,7 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear}){
       <div style={{padding:"7px 12px",borderBottom:"1px solid #f3f4f6",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         {hasPitch?(
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:10,fontWeight:700,color:pitch.call==="strike"?red:green,textTransform:"uppercase",letterSpacing:0.5}}>Called {pitch.call}</span>
+            <span style={{fontSize:10,fontWeight:700,color:pitch.call==="strike"?red:pitch.call==="ball"?green:"#9ca3af",textTransform:"uppercase",letterSpacing:0.5}}>{pitch.call?`Called ${pitch.call}`:pitch.rawCall||"Pitch"}</span>
             {(pitch.type||pitch.speed)&&<><span style={{fontSize:10,color:"#d1d5db"}}>{"\u00B7"}</span><span style={{fontSize:10,color:"#9ca3af"}}>{pitch.type||""} {pitch.speed||""}</span></>}
             {pitch.result&&<><span style={{fontSize:10,color:"#d1d5db"}}>{"\u00B7"}</span><span style={{fontSize:10,fontWeight:600,color:"#6b7280"}}>{pitch.result}</span></>}
           </div>
@@ -568,7 +568,7 @@ function Dots({count,sm}){
 function parseCSV(text){
   const lines=text.split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2)return[];
-  const headers=parseCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
+  const headers=parseCSVLine(lines[0]).map(h=>h.trim());
   return lines.slice(1).map(line=>{
     const vals=parseCSVLine(line);
     const row={};
@@ -593,27 +593,60 @@ function parseCSVLine(line){
   result.push(cur);
   return result;
 }
+// Case-insensitive column resolver — accepts multiple aliases, first match wins
+function resolveColumn(row,...names){
+  for(const name of names){
+    const key=Object.keys(row).find(k=>k.toLowerCase()===name.toLowerCase());
+    if(key&&row[key]!==''&&row[key]!==undefined)return row[key];
+  }
+  return undefined;
+}
+// PitchCall mapping — Trackman V3 descriptive strings + Statcast + shorthand
+const CALLED_STRIKES=['StrikeCalled','called_strike','C','S'];
+const CALLED_BALLS=['BallCalled','ball','B'];
+function mapPitchCall(raw){
+  if(!raw)return{call:null,rawCall:''};
+  const trimmed=raw.trim();
+  if(CALLED_STRIKES.includes(trimmed))return{call:'strike',rawCall:trimmed};
+  if(CALLED_BALLS.includes(trimmed))return{call:'ball',rawCall:trimmed};
+  return{call:null,rawCall:trimmed};
+}
+function parseBool(v){
+  if(v==null||v==='')return null;
+  if(typeof v==='number')return v?1:0;
+  if(typeof v==='boolean')return v?1:0;
+  const s=String(v).trim().toUpperCase();
+  return(s==='1'||s==='TRUE')?1:(s==='0'||s==='FALSE')?0:null;
+}
 function mapTrackmanRow(row){
-  const pX=parseFloat(row.plate_x);
-  const pZ=parseFloat(row.plate_z);
-  const szTop=parseFloat(row.sz_top)||3.5;
-  const szBot=parseFloat(row.sz_bot)||1.6;
+  const pX=parseFloat(resolveColumn(row,'PlateLocSide','plate_x','px'));
+  const pZ=parseFloat(resolveColumn(row,'PlateLocHeight','plate_z','pz'));
+  const szTop=parseFloat(resolveColumn(row,'sz_top','zone_top','StrikeZoneTop'))||3.5;
+  const szBot=parseFloat(resolveColumn(row,'sz_bot','zone_bot','StrikeZoneBottom'))||1.6;
   if(isNaN(pX)||isNaN(pZ))return null;
-  const rawCall=(row.pitch_call||row.call||"").toUpperCase();
-  const call=rawCall==="B"?"ball":rawCall==="C"?"strike":null;
-  const type=row.pitch_type||"";
-  const rawSpeed=row.speed||"";
-  const speed=rawSpeed&&!rawSpeed.includes("mph")?rawSpeed+" mph":rawSpeed;
-  const balls=row.balls!=null&&row.balls!==""?parseInt(row.balls):null;
-  const strikes=row.strikes!=null&&row.strikes!==""?parseInt(row.strikes):null;
-  const outsVal=row.outs!=null&&row.outs!==""?parseInt(row.outs):null;
-  const on1b=row.on_1b!=null&&row.on_1b!==""?(row.on_1b==="1"||row.on_1b.toUpperCase()==="TRUE"?1:0):null;
-  const on2b=row.on_2b!=null&&row.on_2b!==""?(row.on_2b==="1"||row.on_2b.toUpperCase()==="TRUE"?1:0):null;
-  const on3b=row.on_3b!=null&&row.on_3b!==""?(row.on_3b==="1"||row.on_3b.toUpperCase()==="TRUE"?1:0):null;
-  const preCount=balls!=null&&strikes!=null?`${balls}-${strikes}`:null;
-  const preOuts=outsVal!=null?Math.min(outsVal,2):null;
+  const rawCallStr=resolveColumn(row,'PitchCall','pitch_call','call','description')||'';
+  const{call,rawCall}=mapPitchCall(rawCallStr);
+  const type=resolveColumn(row,'TaggedPitchType','AutoPitchType','pitch_type')||'';
+  const rawSpeed=resolveColumn(row,'RelSpeed','ZoneSpeed','speed')||'';
+  const speed=rawSpeed&&!String(rawSpeed).includes('mph')?rawSpeed+' mph':String(rawSpeed);
+  const ballsVal=resolveColumn(row,'Balls','balls');
+  const strikesVal=resolveColumn(row,'Strikes','strikes');
+  const outsVal=resolveColumn(row,'Outs','outs','outs_when_up');
+  const balls=ballsVal!=null?parseInt(ballsVal):null;
+  const strikes=strikesVal!=null?parseInt(strikesVal):null;
+  const outsNum=outsVal!=null?parseInt(outsVal):null;
+  const on1b=parseBool(resolveColumn(row,'on_1b'));
+  const on2b=parseBool(resolveColumn(row,'on_2b'));
+  const on3b=parseBool(resolveColumn(row,'on_3b'));
+  const preCount=balls!=null&&!isNaN(balls)&&strikes!=null&&!isNaN(strikes)?`${balls}-${strikes}`:null;
+  const preOuts=outsNum!=null&&!isNaN(outsNum)?Math.min(outsNum,2):null;
   const preBases=on1b!=null&&on2b!=null&&on3b!=null?`${on1b}${on2b}${on3b}`:null;
-  return{pX,pZ,szTop,szBot,call,type,speed,preCount,preOuts,preBases,rawCall};
+  const pitcher=resolveColumn(row,'Pitcher','pitcher')||'';
+  const batter=resolveColumn(row,'Batter','batter')||'';
+  const catcher=resolveColumn(row,'Catcher','catcher')||'';
+  const inning=resolveColumn(row,'Inning','inning')||'';
+  const half=resolveColumn(row,'Top/Bottom','top_bottom','inning_topbot')||'';
+  return{pX,pZ,szTop,szBot,call,type,speed,preCount,preOuts,preBases,rawCall,pitcher,batter,catcher,inning,half};
 }
 
 // ============================================================
@@ -673,25 +706,27 @@ export default function App(){
       ws.onmessage=(e)=>{
         try{
           const d=JSON.parse(e.data);
-          const pX=parseFloat(d.plate_x);
-          const pZ=parseFloat(d.plate_z);
+          const pX=parseFloat(resolveColumn(d,'PlateLocSide','plate_x','px'));
+          const pZ=parseFloat(resolveColumn(d,'PlateLocHeight','plate_z','pz'));
           if(isNaN(pX)||isNaN(pZ))return;
-          const szTop=parseFloat(d.sz_top)||3.5;
-          const szBot=parseFloat(d.sz_bot)||1.6;
-          const rawCall=(d.call||"").toUpperCase();
-          const call=rawCall==="B"?"ball":rawCall==="C"?"strike":null;
-          if(!call)return; // skip non-called pitches
-          const type=d.pitch_type||"";
-          const rawSpeed=d.speed||"";
-          const speed=rawSpeed&&!String(rawSpeed).includes("mph")?rawSpeed+" mph":String(rawSpeed);
-          const balls=d.balls!=null?parseInt(d.balls):null;
-          const strikes=d.strikes!=null?parseInt(d.strikes):null;
-          const outsVal=d.outs!=null?parseInt(d.outs):null;
-          const on1b=d.on_1b!=null?(d.on_1b===1||d.on_1b==="1"||d.on_1b===true?1:0):null;
-          const on2b=d.on_2b!=null?(d.on_2b===1||d.on_2b==="1"||d.on_2b===true?1:0):null;
-          const on3b=d.on_3b!=null?(d.on_3b===1||d.on_3b==="1"||d.on_3b===true?1:0):null;
-          const preCount=balls!=null&&strikes!=null?`${balls}-${strikes}`:null;
-          const preOuts=outsVal!=null?Math.min(outsVal,2):null;
+          const szTop=parseFloat(resolveColumn(d,'sz_top','zone_top','StrikeZoneTop'))||3.5;
+          const szBot=parseFloat(resolveColumn(d,'sz_bot','zone_bot','StrikeZoneBottom'))||1.6;
+          const rawCallStr=resolveColumn(d,'PitchCall','pitch_call','call','description')||'';
+          const{call}=mapPitchCall(rawCallStr);
+          const type=resolveColumn(d,'TaggedPitchType','AutoPitchType','pitch_type')||'';
+          const rawSpeed=resolveColumn(d,'RelSpeed','ZoneSpeed','speed')||'';
+          const speed=rawSpeed&&!String(rawSpeed).includes('mph')?rawSpeed+' mph':String(rawSpeed);
+          const ballsVal=resolveColumn(d,'Balls','balls');
+          const strikesVal=resolveColumn(d,'Strikes','strikes');
+          const outsVal=resolveColumn(d,'Outs','outs','outs_when_up');
+          const balls=ballsVal!=null?parseInt(ballsVal):null;
+          const strikes=strikesVal!=null?parseInt(strikesVal):null;
+          const outsNum=outsVal!=null?parseInt(outsVal):null;
+          const on1b=parseBool(resolveColumn(d,'on_1b'));
+          const on2b=parseBool(resolveColumn(d,'on_2b'));
+          const on3b=parseBool(resolveColumn(d,'on_3b'));
+          const preCount=balls!=null&&!isNaN(balls)&&strikes!=null&&!isNaN(strikes)?`${balls}-${strikes}`:null;
+          const preOuts=outsNum!=null&&!isNaN(outsNum)?Math.min(outsNum,2):null;
           const preBases=on1b!=null&&on2b!=null&&on3b!=null?`${on1b}${on2b}${on3b}`:null;
           setTmPitch({pX,pZ,szTop,szBot,call,type,speed,preCount,preOuts,preBases});
           if(preCount)setTmCount(preCount);
@@ -989,19 +1024,19 @@ export default function App(){
                             <div>
                               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
                                 <div>
-                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>plate_x</label>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>PlateLocSide</label>
                                   <input type="number" step="0.001" value={tmPaste.pX} onChange={e=>setTmPaste(p=>({...p,pX:e.target.value}))} placeholder="0.00" style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
                                 </div>
                                 <div>
-                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>plate_z</label>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>PlateLocHeight</label>
                                   <input type="number" step="0.001" value={tmPaste.pZ} onChange={e=>setTmPaste(p=>({...p,pZ:e.target.value}))} placeholder="0.00" style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
                                 </div>
                                 <div>
-                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>sz_top</label>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>Zone Top</label>
                                   <input type="number" step="0.01" value={tmPaste.szTop} onChange={e=>setTmPaste(p=>({...p,szTop:e.target.value}))} style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
                                 </div>
                                 <div>
-                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>sz_bot</label>
+                                  <label style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.3,display:"block",marginBottom:2}}>Zone Bottom</label>
                                   <input type="number" step="0.01" value={tmPaste.szBot} onChange={e=>setTmPaste(p=>({...p,szBot:e.target.value}))} style={{width:"100%",padding:"6px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",outline:"none",background:"#f9fafb",color:"#1f2937"}}/>
                                 </div>
                               </div>
@@ -1077,9 +1112,17 @@ export default function App(){
                                         </div>
                                         {tmCsvData[tmCsvIdx]&&(
                                           <div style={{fontSize:10,color:"#6b7280",background:"#f9fafb",borderRadius:6,padding:"4px 8px"}}>
-                                            {tmCsvData[tmCsvIdx].call?<span style={{fontWeight:600,color:tmCsvData[tmCsvIdx].call==="strike"?"#dc2626":"#16a34a",textTransform:"uppercase"}}>Called {tmCsvData[tmCsvIdx].call}</span>:<span style={{color:"#d1d5db"}}>No called pitch</span>}
+                                            {tmCsvData[tmCsvIdx].call?<span style={{fontWeight:600,color:tmCsvData[tmCsvIdx].call==="strike"?"#dc2626":"#16a34a",textTransform:"uppercase"}}>Called {tmCsvData[tmCsvIdx].call}</span>:<span style={{color:"#d1d5db"}}>{tmCsvData[tmCsvIdx].rawCall||"No called pitch"}</span>}
                                             {tmCsvData[tmCsvIdx].type&&<span> · {tmCsvData[tmCsvIdx].type}</span>}
                                             {tmCsvData[tmCsvIdx].speed&&<span> {tmCsvData[tmCsvIdx].speed}</span>}
+                                            {(tmCsvData[tmCsvIdx].pitcher||tmCsvData[tmCsvIdx].batter)&&(
+                                              <div style={{marginTop:2,fontSize:9,color:"#9ca3af"}}>
+                                                {tmCsvData[tmCsvIdx].half&&tmCsvData[tmCsvIdx].inning&&<span>{tmCsvData[tmCsvIdx].half} {tmCsvData[tmCsvIdx].inning} · </span>}
+                                                {tmCsvData[tmCsvIdx].batter&&<span>AB: {tmCsvData[tmCsvIdx].batter}</span>}
+                                                {tmCsvData[tmCsvIdx].batter&&tmCsvData[tmCsvIdx].pitcher&&<span> vs </span>}
+                                                {tmCsvData[tmCsvIdx].pitcher&&<span>P: {tmCsvData[tmCsvIdx].pitcher}</span>}
+                                              </div>
+                                            )}
                                           </div>
                                         )}
                                       </div>
@@ -1306,10 +1349,10 @@ export default function App(){
               {/* Coordinate readout for trackman */}
               {isLive&&trackmanActive&&activePitch&&(
                 <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,padding:"6px 10px",marginBottom:10,fontFamily:"'SF Mono',Menlo,monospace",fontSize:11,color:"#374151",display:"flex",gap:12,flexWrap:"wrap"}}>
-                  <span>pX: <b>{activePitch.pX.toFixed(3)}</b></span>
-                  <span>pZ: <b>{activePitch.pZ.toFixed(3)}</b></span>
-                  <span>szTop: <b>{activePitch.szTop.toFixed(2)}</b></span>
-                  <span>szBot: <b>{activePitch.szBot.toFixed(2)}</b></span>
+                  <span>PlateLocSide: <b>{activePitch.pX.toFixed(3)}</b></span>
+                  <span>PlateLocHeight: <b>{activePitch.pZ.toFixed(3)}</b></span>
+                  <span>Zone Top: <b>{activePitch.szTop.toFixed(2)}</b></span>
+                  <span>Zone Bot: <b>{activePitch.szBot.toFixed(2)}</b></span>
                 </div>
               )}
 
@@ -1469,7 +1512,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
                 <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",color:"#6b7280"}}>{row.type||"—"}</td>
                 <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",color:"#6b7280"}}>{row.speed||"—"}</td>
                 <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{row.conf!=null?`${row.conf}%`:"—"}</td>
-                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontWeight:700,color:row.verdict==="CHALLENGE"?green:row.verdict==="HOLD"?red:row.verdict==="CLOSE"?yellow:"#d1d5db"}}>{noCalled?"No called pitch":row.verdict||"—"}</td>
+                <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontWeight:700,color:row.verdict==="CHALLENGE"?green:row.verdict==="HOLD"?red:row.verdict==="CLOSE"?yellow:"#d1d5db"}}>{noCalled?"—":row.verdict||"—"}</td>
                 <td style={{padding:"4px 6px",fontSize:10,textAlign:"center",borderBottom:"1px solid #f3f4f6",fontVariantNumeric:"tabular-nums",fontFamily:"'SF Mono',Menlo,monospace"}}>{row.dRE!=null?row.dRE.toFixed(3):"—"}</td>
               </tr>
             );
@@ -1684,7 +1727,41 @@ function Methodology(){
 
       <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective zone width accounts for the ball diameter: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the plate, so the zone boundary for ball-center coordinates is (17" + 2.9") / 2 = 9.95" from center. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
 
-      <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
+      <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features 10 real called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
+
+      <div style={s}><div style={h}>How to Get Pitch Data</div>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:4}}>MLB: Baseball Savant (Statcast)</div>
+          <ol style={{...p,paddingLeft:20,margin:0}}>
+            <li>Go to baseballsavant.mlb.com/statcast_search</li>
+            <li>Set filters: Season, Game Date, optionally Pitch Result / Team / Pitcher</li>
+            <li>Click Search, then Download CSV</li>
+            <li>CSV includes: plate_x, plate_z, sz_top, sz_bot, description, balls, strikes, outs_when_up, on_1b, on_2b, on_3b, inning, inning_topbot, batter, pitcher</li>
+            <li>Upload directly — the engine accepts all Statcast column names as aliases</li>
+          </ol>
+        </div>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#374151",marginBottom:4}}>College/MiLB: Trackman V3</div>
+          <ol style={{...p,paddingLeft:20,margin:0}}>
+            <li><b>Via FTP/FileZilla:</b> Programs with a V3 unit get automatic CSV uploads after each game. Use the /verified folder for quality-checked data.</li>
+            <li><b>Request from DataDesk:</b> Email datadesksupervisors@trackman.com with organization, date, and session time.</li>
+            <li><b>Via 643 Charts (Trackman SYNC):</b> Export pitch data directly from the SYNC interface if your program has the integration.</li>
+            <li>Upload the CSV to the engine.</li>
+          </ol>
+        </div>
+        <div style={{...code,fontSize:11,lineHeight:1.6}}>
+          <div style={{fontWeight:600,marginBottom:4}}>What V3 CSVs include:</div>
+          PlateLocSide, PlateLocHeight, PitchCall, Balls, Strikes, Outs,<br/>
+          Pitcher, Batter, Catcher, TaggedPitchType, RelSpeed, Inning, Top/Bottom
+        </div>
+        <div style={{background:"#fef3c7",border:"1px solid #fde68a",borderRadius:8,padding:"10px 12px",marginTop:10,fontSize:12,color:"#92400e",lineHeight:1.6}}>
+          <b>V3 CSVs do NOT include:</b><br/>
+          Per-batter strike zone boundaries — engine defaults to 3.5 / 1.6 ft, editable in UI<br/>
+          Base runners — add on_1b, on_2b, on_3b from scorebook for full RE analysis<br/>
+          Umpire name — add manually if needed for future umpire scouting features
+        </div>
+      </div>
+
       <div style={s}><div style={h}>Limitations & Next Steps</div><p style={p}>The matchup adjustment uses season xwOBA from Statcast, which strips out defense and luck but doesn't yet capture platoon splits (L/R advantages), recent form, or pitch-type matchup edges. A production system would incorporate rolling xwOBA windows, platoon splits, and potentially batter hot/cold zones against specific pitch types. Trackman data can also be consumed via websocket or CSV for NCAA/college environments where ABS is being adopted.</p></div>
 
       <div style={{...s,background:"#f9fafb"}}><div style={{...h,fontSize:13}}>Data Sources</div><p style={{...p,fontSize:12}}>RE288 matrix computed recursively per <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (2018)</a>, using 2010–2015 Retrosheet play-by-play data. Challenge thresholds per <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (Feb 2025)</a>, validated against 2025 AAA challenge data. The RE288 framework and the concept of count-level run values are one of Tango's many contributions to modern sabermetrics. Methodology follows Tango, Lichtman & Dolphin, "The Book: Playing the Percentages in Baseball." Live game data from MLB Stats API (statsapi.mlb.com). xwOBA data from Baseball Savant (baseballsavant.mlb.com).</p></div>
