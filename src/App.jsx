@@ -295,9 +295,11 @@ function useLiveGame(gamePk){
   const lsTimer=useRef(null);
   const pitchTimer=useRef(null);
   const lastPitchId=useRef(null);
+  const lastAbIndex=useRef(null);
+  const lsSnap=useRef(null); // snapshot of linescore state for pitch context
 
   useEffect(()=>{
-    if(!gamePk){setState(null);setPitch(null);setErr(null);lastPitchId.current=null;return;}
+    if(!gamePk){setState(null);setPitch(null);setErr(null);lastPitchId.current=null;lastAbIndex.current=null;lsSnap.current=null;return;}
     let cancelled=false;
 
     // Linescore poll — game state every 5s
@@ -321,13 +323,15 @@ function useLiveGame(gamePk){
         const pitcher=d.defense?.pitcher?.fullName||"";
         const batterId=d.offense?.batter?.id||null;
         const pitcherId=d.defense?.pitcher?.id||null;
-        setState({
+        const newState={
           balls,strikes,outs:Math.min(outs_val,2),inn,isTop,
           away,home,
           bases:`${first}${second}${third}`,
           count:`${balls}-${strikes}`,
           batter,pitcher,batterId,pitcherId,
-        });
+        };
+        setState(newState);
+        lsSnap.current=newState;
         setErr(null);
       }catch(e){if(!cancelled)setErr(e.name==="AbortError"?"Connection timed out":e.message)}
       finally{if(!cancelled)lsTimer.current=setTimeout(pollLinescore,5000);}
@@ -342,13 +346,25 @@ function useLiveGame(gamePk){
         clearTimeout(tid);
         if(!res.ok||cancelled)return;
         const fd=await res.json();
-        const events=fd.liveData?.plays?.currentPlay?.playEvents;
+        const curPlay=fd.liveData?.plays?.currentPlay;
+        const events=curPlay?.playEvents;
         if(!events||events.length===0)return;
         let lastP=null;
         for(let i=events.length-1;i>=0;i--){if(events[i].isPitch){lastP=events[i];break;}}
         if(!lastP)return;
-        const pitchId=`${fd.liveData?.plays?.currentPlay?.atBatIndex}-${lastP.index}`;
-        if(pitchId===lastPitchId.current)return;
+        const curAbIndex=curPlay?.atBatIndex;
+        const pitchId=`${curAbIndex}-${lastP.index}`;
+        // Clear pitch when a new at-bat starts (K, BB, in-play ended previous AB)
+        if(curAbIndex!==lastAbIndex.current){
+          lastAbIndex.current=curAbIndex;
+          if(lastPitchId.current!==null)setPitch(null); // clear stale pitch from previous AB
+        }
+        // If same pitch but AB just completed, update with result
+        if(pitchId===lastPitchId.current){
+          const result=curPlay?.about?.isComplete?curPlay?.result?.event:null;
+          if(result){setPitch(prev=>prev?{...prev,result}:prev);}
+          return;
+        }
         lastPitchId.current=pitchId;
         const callCode=lastP.details?.call?.code;
         if(callCode==="C"||callCode==="B"){
@@ -361,13 +377,17 @@ function useLiveGame(gamePk){
             if(callCode==="B"){preB=postB-1;preS=postS;}
             else{preB=postB;preS=postS-1;}
             const preCount=`${Math.max(0,preB)}-${Math.min(2,Math.max(0,preS))}`;
+            // Outs from pitch event (stable during AB), bases from linescore snapshot
+            const preOuts=Math.min(lastP.count?.outs??0,2);
+            const preBases=lsSnap.current?.bases||"000";
+            const result=curPlay?.about?.isComplete?curPlay?.result?.event:null;
             setPitch({pX,pZ,
               szTop:lastP.pitchData?.strikeZoneTop??3.5,
               szBot:lastP.pitchData?.strikeZoneBottom??1.6,
               call:callCode==="C"?"strike":"ball",
               type:lastP.details?.type?.description||lastP.details?.type?.code||"",
               speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
-              preCount,
+              preCount,preOuts,preBases,result,
             });
           }
         }else{setPitch(null);}
@@ -392,21 +412,21 @@ const lastName=n=>{if(!n)return"";const p=n.split(" ");if(p.length<=1)return n;c
 // Pitchers: xwOBA-against (lower = better). Batters: xwOBA (higher = better).
 const DEMO_STATS={571970:{xwoba:.374,type:"batter",name:"Max Muncy"},605135:{xwoba:.310,type:"pitcher",name:"Chris Bassitt"},605483:{xwoba:.283,type:"pitcher",name:"Blake Snell"},606192:{xwoba:.323,type:"batter",name:"Teoscar Hernández"},607192:{xwoba:.285,type:"pitcher",name:"Tyler Glasnow"},622554:{xwoba:.290,type:"pitcher",name:"Seranthony Domínguez"},656546:{xwoba:.285,type:"pitcher",name:"Jeff Hoffman"},660271:{xwoba:.250,type:"pitcher",name:"Shohei Ohtani"},665489:{xwoba:.384,type:"batter",name:"Vladimir Guerrero Jr."},665926:{xwoba:.308,type:"batter",name:"Andrés Giménez"},666182:{xwoba:.353,type:"batter",name:"Bo Bichette"},669257:{xwoba:.378,type:"batter",name:"Will Smith"},669456:{xwoba:.310,type:"pitcher",name:"Shane Bieber"},676914:{xwoba:.323,type:"batter",name:"Davis Schneider"},702056:{xwoba:.295,type:"pitcher",name:"Trey Yesavage"},808967:{xwoba:.259,type:"pitcher",name:"Yoshinobu Yamamoto"}};
 const DEMO_PLAYS=[
-  {label:"Hernández vs Bassitt",sub:"Top 6 · 0 out · 1st & 2nd · LAD 1, TOR 3",note:"Ump scorecard's #1 most impactful missed call. Strike called a ball on a 1-1 count — runners on 1st and 2nd with nobody out.",count:"2-1",outs:0,bases:"110",inn:6,isTop:true,away:1,home:3,batterId:606192,pitcherId:605135,batter:"Teoscar Hernández",pitcher:"Chris Bassitt",
+  {label:"Hernández vs Bassitt",sub:"Top 6 · 0 out · 1st & 2nd · LAD 1, TOR 3",note:"Ump scorecard's #1 most impactful missed call. Strike called a ball on a 1-1 count — runners on 1st and 2nd with nobody out.",count:"2-1",outs:0,bases:"110",inn:6,isTop:true,away:1,home:3,batterId:606192,pitcherId:605135,batter:"Teoscar Hernández",pitcher:"Chris Bassitt",result:"Forceout",
     pitch:{pX:0.266,pZ:3.401,szTop:3.38,szBot:1.62,call:"ball",type:"Sinker",speed:"92.1 mph",preCount:"1-1"}},
-  {label:"Giménez vs Glasnow",sub:"Bot 6 · 0 out · Runner on 1st · LAD 2, TOR 4",note:"5 called pitches in this at-bat — a full-count battle. Giménez doubles to drive in the run. Runner on 1st, nobody out.",count:"3-2",outs:0,bases:"100",inn:6,isTop:false,away:2,home:4,batterId:665926,pitcherId:607192,batter:"Andrés Giménez",pitcher:"Tyler Glasnow",
+  {label:"Giménez vs Glasnow",sub:"Bot 6 · 0 out · Runner on 1st · LAD 2, TOR 4",note:"5 called pitches in this at-bat — a full-count battle. Giménez doubles to drive in the run. Runner on 1st, nobody out.",count:"3-2",outs:0,bases:"100",inn:6,isTop:false,away:2,home:4,batterId:665926,pitcherId:607192,batter:"Andrés Giménez",pitcher:"Tyler Glasnow",result:"Double",
     pitch:{pX:-0.573,pZ:2.338,szTop:3.50,szBot:1.70,call:"strike",type:"Four-Seam Fastball",speed:"96.1 mph",preCount:"3-1"}},
-  {label:"Muncy HR off Yesavage",sub:"Top 8 · 1 out · Bases empty · LAD 2, TOR 4",note:"Down 2 in the 8th, Muncy launches a solo homer to cut the deficit. Called strike on 0-1 was actually 3.7\" outside the zone.",count:"0-1",outs:1,bases:"000",inn:8,isTop:true,away:2,home:4,batterId:571970,pitcherId:702056,batter:"Max Muncy",pitcher:"Trey Yesavage",
+  {label:"Muncy HR off Yesavage",sub:"Top 8 · 1 out · Bases empty · LAD 2, TOR 4",note:"Down 2 in the 8th, Muncy launches a solo homer to cut the deficit. Called strike on 0-1 was actually 3.7\" outside the zone.",count:"0-1",outs:1,bases:"000",inn:8,isTop:true,away:2,home:4,batterId:571970,pitcherId:702056,batter:"Max Muncy",pitcher:"Trey Yesavage",result:"Home Run",
     pitch:{pX:0.234,pZ:3.472,szTop:3.17,szBot:1.51,call:"strike",type:"Splitter",speed:"82.4 mph",preCount:"0-0"}},
-  {label:"Schneider vs Snell",sub:"Bot 8 · 2 out · Runner on 2nd · LAD 3, TOR 4",note:"Snell protecting a 1-run lead. Called strike on 0-1, then the pivotal called strike on 2-2 — ball called a strike per ump scorecard (#3 most impactful).",count:"2-2",outs:2,bases:"010",inn:8,isTop:false,away:3,home:4,batterId:676914,pitcherId:605483,batter:"Davis Schneider",pitcher:"Blake Snell",
+  {label:"Schneider vs Snell",sub:"Bot 8 · 2 out · Runner on 2nd · LAD 3, TOR 4",note:"Snell protecting a 1-run lead. Called strike on 0-1, then the pivotal called strike on 2-2 — ball called a strike per ump scorecard (#3 most impactful).",count:"2-2",outs:2,bases:"010",inn:8,isTop:false,away:3,home:4,batterId:676914,pitcherId:605483,batter:"Davis Schneider",pitcher:"Blake Snell",result:"Strikeout",
     pitch:{pX:0.914,pZ:2.835,szTop:3.11,szBot:1.53,call:"strike",type:"Changeup",speed:"81.8 mph",preCount:"2-1"}},
-  {label:"Smith called K",sub:"Top 9 · 2 out · Bases empty · Tied 4-4",note:"6 called pitches — the most in any at-bat. Game-tying run already in. Hoffman gets Smith looking on a full count. Called strike 3 per ump scorecard was ball called strike (#2 most impactful).",count:"3-2",outs:2,bases:"000",inn:9,isTop:true,away:4,home:4,batterId:669257,pitcherId:656546,batter:"Will Smith",pitcher:"Jeff Hoffman",
+  {label:"Smith called K",sub:"Top 9 · 2 out · Bases empty · Tied 4-4",note:"6 called pitches — the most in any at-bat. Game-tying run already in. Hoffman gets Smith looking on a full count. Called strike 3 per ump scorecard was ball called strike (#2 most impactful).",count:"3-2",outs:2,bases:"000",inn:9,isTop:true,away:4,home:4,batterId:669257,pitcherId:656546,batter:"Will Smith",pitcher:"Jeff Hoffman",result:"Strikeout",
     pitch:{pX:0.960,pZ:2.130,szTop:3.33,szBot:1.57,call:"strike",type:"Four-Seam Fastball",speed:"94.9 mph",preCount:"3-2"}},
-  {label:"Hernández walks, bases loaded",sub:"Top 10 · 1 out · 1st & 2nd · Tied 4-4",note:"Extras. Bases loaded with 1 out. 4 called pitches including the walk on 3-2. A challenge on a ball/strike here changes everything.",count:"3-2",outs:1,bases:"110",inn:10,isTop:true,away:4,home:4,batterId:606192,pitcherId:622554,batter:"Teoscar Hernández",pitcher:"Seranthony Domínguez",
+  {label:"Hernández walks, bases loaded",sub:"Top 10 · 1 out · 1st & 2nd · Tied 4-4",note:"Extras. Bases loaded with 1 out. 4 called pitches including the walk on 3-2. A challenge on a ball/strike here changes everything.",count:"3-2",outs:1,bases:"110",inn:10,isTop:true,away:4,home:4,batterId:606192,pitcherId:622554,batter:"Teoscar Hernández",pitcher:"Seranthony Domínguez",result:"Walk",
     pitch:{pX:1.014,pZ:2.325,szTop:3.55,szBot:1.70,call:"ball",type:"Four-Seam Fastball",speed:"98.5 mph",preCount:"2-2"}},
-  {label:"Smith go-ahead HR",sub:"Top 11 · 2 out · Bases empty · Tied 4-4",note:"Will Smith homers off Bieber to break the tie in the 11th. 2 called balls early in the count.",count:"2-0",outs:2,bases:"000",inn:11,isTop:true,away:4,home:4,batterId:669257,pitcherId:669456,batter:"Will Smith",pitcher:"Shane Bieber",
+  {label:"Smith go-ahead HR",sub:"Top 11 · 2 out · Bases empty · Tied 4-4",note:"Will Smith homers off Bieber to break the tie in the 11th. 2 called balls early in the count.",count:"2-0",outs:2,bases:"000",inn:11,isTop:true,away:4,home:4,batterId:669257,pitcherId:669456,batter:"Will Smith",pitcher:"Shane Bieber",result:"Home Run",
     pitch:{pX:1.015,pZ:0.973,szTop:3.40,szBot:1.59,call:"ball",type:"Knuckle Curve",speed:"82.5 mph",preCount:"1-0"}},
-  {label:"Vlad Jr. double",sub:"Bot 11 · 0 out · Bases empty · LAD 5, TOR 4",note:"Down 1 in the bottom of the 11th. Vlad Jr. rips a double — 5 called pitches in a full-count battle. Tying run in scoring position.",count:"3-2",outs:0,bases:"000",inn:11,isTop:false,away:5,home:4,batterId:665489,pitcherId:808967,batter:"Vladimir Guerrero Jr.",pitcher:"Yoshinobu Yamamoto",
+  {label:"Vlad Jr. double",sub:"Bot 11 · 0 out · Bases empty · LAD 5, TOR 4",note:"Down 1 in the bottom of the 11th. Vlad Jr. rips a double — 5 called pitches in a full-count battle. Tying run in scoring position.",count:"3-2",outs:0,bases:"000",inn:11,isTop:false,away:5,home:4,batterId:665489,pitcherId:808967,batter:"Vladimir Guerrero Jr.",pitcher:"Yoshinobu Yamamoto",result:"Double",
     pitch:{pX:-1.105,pZ:3.131,szTop:3.67,szBot:1.51,call:"ball",type:"Splitter",speed:"91.3 mph",preCount:"2-2"}},
 ];
 
@@ -478,6 +498,7 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear}){
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <span style={{fontSize:10,fontWeight:700,color:pitch.call==="strike"?red:green,textTransform:"uppercase",letterSpacing:0.5}}>Called {pitch.call}</span>
             {(pitch.type||pitch.speed)&&<><span style={{fontSize:10,color:"#d1d5db"}}>{"\u00B7"}</span><span style={{fontSize:10,color:"#9ca3af"}}>{pitch.type||""} {pitch.speed||""}</span></>}
+            {pitch.result&&<><span style={{fontSize:10,color:"#d1d5db"}}>{"\u00B7"}</span><span style={{fontSize:10,fontWeight:600,color:"#6b7280"}}>{pitch.result}</span></>}
           </div>
         ):(
           <span style={{fontSize:10,color:"#9ca3af"}}>{interactive?"Click zone to plot pitch":"Pitch Location"}</span>
@@ -595,8 +616,8 @@ export default function App(){
   // This lets the engine show K/BB terminal transitions even after the linescore resets.
   const isLive=mode==="live"||mode==="signal";
   const rawCount=isLive&&liveState?liveState.count:mode==="demo"?demoPlay.count:count;
-  const activeOuts=isLive&&liveState?liveState.outs:mode==="demo"?demoPlay.outs:outs;
-  const activeBs=isLive&&liveState?liveState.bases:mode==="demo"?demoPlay.bases:bs;
+  const rawOuts=isLive&&liveState?liveState.outs:mode==="demo"?demoPlay.outs:outs;
+  const rawBases=isLive&&liveState?liveState.bases:mode==="demo"?demoPlay.bases:bs;
 
   // Active pitch data for zone card
   // Batting perspective → challenging a called strike
@@ -607,16 +628,18 @@ export default function App(){
       return{pX:manualPitch.pX,pZ:manualPitch.pZ,szTop:3.5,szBot:1.6,call,type:"",speed:""};
     }
     if((mode==="live"||mode==="signal")&&livePitch){
-      return{pX:livePitch.pX,pZ:livePitch.pZ,szTop:livePitch.szTop,szBot:livePitch.szBot,call:livePitch.call,type:livePitch.type,speed:livePitch.speed,preCount:livePitch.preCount};
+      return{pX:livePitch.pX,pZ:livePitch.pZ,szTop:livePitch.szTop,szBot:livePitch.szBot,call:livePitch.call,type:livePitch.type,speed:livePitch.speed,preCount:livePitch.preCount,preOuts:livePitch.preOuts,preBases:livePitch.preBases,result:livePitch.result};
     }
     if(mode==="demo"&&demoPlay.pitch){
-      return demoPlay.pitch;
+      return{...demoPlay.pitch,preOuts:demoPlay.outs,preBases:demoPlay.bases,result:demoPlay.result};
     }
     return null;
   },[mode,manualPitch,persp,livePitch,demoPlay]);
 
-  // Use pre-pitch count for challenge analysis when we have pitch data
+  // Use pre-pitch state for challenge analysis when we have pitch data
   const activeCount=activePitch?.preCount||rawCount;
+  const activeOuts=activePitch?.preOuts??rawOuts;
+  const activeBs=activePitch?.preBases||rawBases;
 
   const liveGames=games.filter(g=>g.status?.abstractGameState==="Live");
   const scheduledGames=games.filter(g=>g.status?.abstractGameState==="Preview");
@@ -975,7 +998,7 @@ export default function App(){
                   <div style={{background:bg,borderRadius:16,padding:"48px 32px",textAlign:"center",transition:"background .3s ease",minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
                     <div style={{fontSize:48,fontWeight:800,color:textCol,letterSpacing:-1,lineHeight:1}}>{label}</div>
                     <div style={{fontSize:18,fontWeight:600,color:textCol,opacity:0.85,marginTop:12}}>{conf}% conf · need {thresh}%</div>
-                    <div style={{fontSize:13,color:textCol,opacity:0.7,marginTop:8}}>Called {activePitch.call} · {activePitch.type} {activePitch.speed}</div>
+                    <div style={{fontSize:13,color:textCol,opacity:0.7,marginTop:8}}>Called {activePitch.call} · {activePitch.type} {activePitch.speed}{activePitch.result?` · ${activePitch.result}`:""}</div>
                   </div>
                 );
               })()}
