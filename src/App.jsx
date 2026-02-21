@@ -980,7 +980,10 @@ export default function App(){
                   Challenges worth {mpct>0?"+":""}{mpct.toFixed(0)}% this AB
                 </div>;
               })()}
-              {mode!=="signal"&&analysis?.results?.map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} persp={persp} mode={mode}/>)}
+              {mode!=="signal"&&analysis?.results?.filter(r=>{
+                if(!activePitch?.call)return true; // manual mode: show both
+                return activePitch.call==="ball"?r.type==="b2s":r.type==="s2b";
+              }).map((r,i)=><ChallengeCard key={`${r.from}-${r.to}`} r={r} persp={persp} mode={mode}/>)}
               {mode!=="signal"&&(!analysis||analysis.results.length===0)&&(
                 <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:32,textAlign:"center",color:"#9ca3af",fontSize:13}}>
                   {isLive&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
