@@ -709,6 +709,28 @@ export default function App(){
   const{state:liveState,pitch:livePitch,pitchSequence:livePitchSeq,lastPlayResult:liveLastPlay,recentPlays:liveRecentPlays}=useLiveGame(mode==="live"||mode==="signal"?selectedGame:null);
   const{stats:playerStats,loading:statsLoading}=usePlayerStats(selectedGame,mode);
   const[showRecentPlays,setShowRecentPlays]=useState(false);
+  // Game ticker carousel
+  const tickerRef=useRef(null);
+  const tickerDrag=useRef({down:false,startX:0,scrollL:0});
+  const onTickerDown=useCallback(e=>{
+    const el=tickerRef.current;if(!el)return;
+    tickerDrag.current={down:true,startX:e.pageX??e.touches?.[0]?.pageX??0,scrollL:el.scrollLeft};
+    el.style.cursor="grabbing";el.style.userSelect="none";
+  },[]);
+  const onTickerMove=useCallback(e=>{
+    if(!tickerDrag.current.down)return;
+    const x=e.pageX??e.touches?.[0]?.pageX??0;
+    const dx=x-tickerDrag.current.startX;
+    tickerRef.current.scrollLeft=tickerDrag.current.scrollL-dx;
+  },[]);
+  const onTickerUp=useCallback(()=>{
+    tickerDrag.current.down=false;
+    if(tickerRef.current){tickerRef.current.style.cursor="grab";tickerRef.current.style.userSelect="";}
+  },[]);
+  const tickerScroll=useCallback((dir)=>{
+    const el=tickerRef.current;if(!el)return;
+    el.scrollBy({left:dir*200,behavior:"smooth"});
+  },[]);
   // Matrix state
   const[mOuts,setMOuts]=useState(0);
   const[mView,setMView]=useState("re");
@@ -908,11 +930,11 @@ export default function App(){
         *{box-sizing:border-box}
         @media(max-width:860px){.sim-grid{grid-template-columns:1fr!important}}
         @media(max-width:600px){.content-wrap{padding:12px!important}.count-grid{grid-template-columns:repeat(3,1fr)!important}.mx-controls{flex-direction:column!important;align-items:flex-start!important}}
-        .game-ticker{display:flex;gap:6px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:thin;scrollbar-color:#d1d5db transparent;-webkit-overflow-scrolling:touch}
-        .game-ticker::-webkit-scrollbar{height:4px}
-        .game-ticker::-webkit-scrollbar-track{background:transparent}
-        .game-ticker::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:4px}
+        .game-ticker{display:flex;gap:6px;overflow-x:auto;padding:2px 0 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;cursor:grab}
+        .game-ticker::-webkit-scrollbar{display:none}
         .game-ticker-btn{flex-shrink:0;min-width:120px;padding:6px 10px;border-radius:8px;border:2px solid transparent;cursor:pointer;text-align:left;transition:all .15s;font-family:inherit}
+        .ticker-arrow{width:28px;height:28px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#374151;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;font-family:inherit;flex-shrink:0;transition:all .12s}
+        .ticker-arrow:hover{background:#f3f4f6;border-color:#d1d5db}
         input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:99px;background:#e5e7eb;outline:none}
         input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#111827;cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.15)}
         input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#111827;cursor:pointer;border:2px solid #fff}
@@ -951,35 +973,41 @@ export default function App(){
                   {scheduledGames.length>0&&<span>{scheduledGames.length} Sched</span>}
                 </div>
               </div>
-              <div className="game-ticker">
-                {[...liveGames,...finalGames,...scheduledGames].map(g=>{
-                  const away=g.teams?.away,home=g.teams?.home;
-                  const sel=selectedGame===g.gamePk;
-                  const ls=g.linescore;
-                  const isLive=g.status?.abstractGameState==="Live";
-                  const isFinal=g.status?.abstractGameState==="Final";
-                  const isScheduled=g.status?.abstractGameState==="Preview";
-                  return(
-                    <button key={g.gamePk} onClick={()=>setSelectedGame(g.gamePk)} className="game-ticker-btn" style={{
-                      background:sel?"#111827":isLive?"#f0fdf4":isFinal?"#f9fafb":"#f3f4f6",
-                      color:sel?"#fff":"#374151",
-                      borderColor:sel?"#111827":isLive?"#bbf7d0":"transparent",
-                      opacity:isScheduled?.6:1,
-                    }}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                        <div style={{fontSize:11,fontWeight:600,lineHeight:1.4}}>
-                          <div>{teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"}</div>
-                          <div>{teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}</div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <button className="ticker-arrow" onClick={()=>tickerScroll(-1)} aria-label="Scroll left">‹</button>
+                <div className="game-ticker" ref={tickerRef}
+                  onMouseDown={onTickerDown} onMouseMove={onTickerMove} onMouseUp={onTickerUp} onMouseLeave={onTickerUp}
+                  onTouchStart={onTickerDown} onTouchMove={onTickerMove} onTouchEnd={onTickerUp}>
+                  {[...liveGames,...finalGames,...scheduledGames].map(g=>{
+                    const away=g.teams?.away,home=g.teams?.home;
+                    const sel=selectedGame===g.gamePk;
+                    const ls=g.linescore;
+                    const isLive=g.status?.abstractGameState==="Live";
+                    const isFinal=g.status?.abstractGameState==="Final";
+                    const isScheduled=g.status?.abstractGameState==="Preview";
+                    return(
+                      <button key={g.gamePk} onClick={e=>{if(Math.abs((e.pageX||0)-tickerDrag.current.startX)>5)return;setSelectedGame(g.gamePk);}} className="game-ticker-btn" style={{
+                        background:sel?"#111827":isLive?"#f0fdf4":isFinal?"#f9fafb":"#f3f4f6",
+                        color:sel?"#fff":"#374151",
+                        borderColor:sel?"#111827":isLive?"#bbf7d0":"transparent",
+                        opacity:isScheduled?.6:1,
+                      }}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                          <div style={{fontSize:11,fontWeight:600,lineHeight:1.4}}>
+                            <div>{teamAbbr(away?.team)} {ls?.teams?.away?.runs??"-"}</div>
+                            <div>{teamAbbr(home?.team)} {ls?.teams?.home?.runs??"-"}</div>
+                          </div>
+                          <div style={{fontSize:9,color:sel?"rgba(255,255,255,.6)":"#9ca3af",textAlign:"right",lineHeight:1.5}}>
+                            {isLive&&<div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end"}}><span style={{width:5,height:5,borderRadius:"50%",background:"#22c55e",display:"inline-block",animation:"pulse 1.5s infinite"}}/><span style={{color:sel?"#4ade80":"#16a34a",fontWeight:600}}>{ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}</span></div>}
+                            {isFinal&&<div style={{fontWeight:500}}>Final{(ls?.currentInning&&ls.currentInning>9)?` (${ls.currentInning})`:""}</div>}
+                            {isScheduled&&<div>{g.gameDate?new Date(g.gameDate).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"TBD"}</div>}
+                          </div>
                         </div>
-                        <div style={{fontSize:9,color:sel?"rgba(255,255,255,.6)":"#9ca3af",textAlign:"right",lineHeight:1.5}}>
-                          {isLive&&<div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end"}}><span style={{width:5,height:5,borderRadius:"50%",background:"#22c55e",display:"inline-block",animation:"pulse 1.5s infinite"}}/><span style={{color:sel?"#4ade80":"#16a34a",fontWeight:600}}>{ls?.isTopInning?"Top":"Bot"} {ls?.currentInning||"?"}</span></div>}
-                          {isFinal&&<div style={{fontWeight:500}}>Final{(ls?.currentInning&&ls.currentInning>9)?` (${ls.currentInning})`:""}</div>}
-                          {isScheduled&&<div>{g.gameDate?new Date(g.gameDate).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"TBD"}</div>}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button className="ticker-arrow" onClick={()=>tickerScroll(1)} aria-label="Scroll right">›</button>
               </div>
             </div>
           )}
