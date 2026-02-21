@@ -30,7 +30,7 @@ Per [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/articl
 
 **Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score with team abbreviations. Schedule refreshes every 30 seconds to keep all game buttons current. On game selection, preloads season xwOBA for both rosters via a [Vercel serverless endpoint](#xwoba-api) and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter-pitcher pairing relative to league average.
 
-**World Series Game 7 Demo** — Walk through 10 pivotal at-bats from the LAD-TOR Game 7 with real 2025 Statcast xwOBA data, showing how challenge decisions would have played out under ABS.
+**World Series Game 7 Demo** — Walk through pivotal at-bats from the LAD-TOR Game 7 with real 2025 Statcast xwOBA data, showing how challenge decisions would have played out under ABS.
 
 **Terminal Transitions** — Models strikeouts and walks as full base-out state changes, not just count changes. Overturning a ball on an x-2 count produces a strikeout (outs +1, runners stay). Overturning a strike on a 3-x count produces a walk (batter to 1st, forced runners advance, bases-loaded walk scores a run).
 
