@@ -290,11 +290,10 @@ function useLiveGame(gamePk){
   const[pitch,setPitch]=useState(null);
   const[err,setErr]=useState(null);
   const timeoutRef=useRef(null);
-  const prevKey=useRef(null); // track count+outs+inning to detect changes
-  const lastPitchId=useRef(null);
+  const prevKey=useRef(null);
 
   useEffect(()=>{
-    if(!gamePk){setState(null);setPitch(null);setErr(null);prevKey.current=null;lastPitchId.current=null;return;}
+    if(!gamePk){setState(null);setPitch(null);setErr(null);prevKey.current=null;return;}
     let cancelled=false;
     async function poll(){
       try{
@@ -305,7 +304,6 @@ function useLiveGame(gamePk){
         if(!res.ok)throw new Error("Linescore fetch failed");
         const d=await res.json();
         if(cancelled)return;
-        // Parse game state
         const balls=d.balls??0,strikes=d.strikes??0,outs_val=d.outs??0;
         const inn=d.currentInning??1;
         const isTop=d.isTopInning??true;
@@ -330,6 +328,8 @@ function useLiveGame(gamePk){
         const key=`${inn}-${isTop}-${balls}-${strikes}-${outs_val}`;
         if(key!==prevKey.current){
           prevKey.current=key;
+          // Clear pitch on new batter (count reset to 0-0) or inning change
+          if(balls===0&&strikes===0)setPitch(null);
           try{
             const ctrl2=new AbortController();
             const tid2=setTimeout(()=>ctrl2.abort(),10000);
@@ -342,26 +342,23 @@ function useLiveGame(gamePk){
                 let lastP=null;
                 for(let i=events.length-1;i>=0;i--){if(events[i].isPitch){lastP=events[i];break;}}
                 if(lastP){
-                  const pitchId=`${fd.liveData?.plays?.currentPlay?.atBatIndex}-${lastP.index}`;
-                  if(pitchId!==lastPitchId.current){
-                    lastPitchId.current=pitchId;
-                    const callCode=lastP.details?.call?.code;
-                    if(callCode==="C"||callCode==="B"){
-                      const pX=lastP.pitchData?.coordinates?.pX;
-                      const pZ=lastP.pitchData?.coordinates?.pZ;
-                      if(pX!=null&&pZ!=null){
-                        setPitch({pX,pZ,
-                          szTop:lastP.pitchData?.strikeZoneTop??3.5,
-                          szBot:lastP.pitchData?.strikeZoneBottom??1.6,
-                          call:callCode==="C"?"strike":"ball",
-                          type:lastP.details?.type?.description||lastP.details?.type?.code||"",
-                          speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
-                        });
-                      }else{setPitch(null);}
-                    }else{setPitch(null);}
+                  const callCode=lastP.details?.call?.code;
+                  if(callCode==="C"||callCode==="B"){
+                    const pX=lastP.pitchData?.coordinates?.pX;
+                    const pZ=lastP.pitchData?.coordinates?.pZ;
+                    if(pX!=null&&pZ!=null){
+                      setPitch({pX,pZ,
+                        szTop:lastP.pitchData?.strikeZoneTop??3.5,
+                        szBot:lastP.pitchData?.strikeZoneBottom??1.6,
+                        call:callCode==="C"?"strike":"ball",
+                        type:lastP.details?.type?.description||lastP.details?.type?.code||"",
+                        speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
+                      });
+                    }
                   }
+                  // If last pitch was a swing/foul, keep previous called pitch visible
                 }
-              }else{setPitch(null);}
+              }
             }
           }catch(e){/* pitch fetch failed, keep going */}
         }
