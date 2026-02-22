@@ -1,12 +1,12 @@
 # ABS Challenge Engine
 
-A decision-support tool for optimizing ball-strike challenge decisions under MLB's Automated Ball-Strike (ABS) system. Built for front office analysts and dugout strategy staff.
+A decision-support tool for optimizing ball-strike challenge decisions under MLB's Automated Ball-Strike (ABS) system. Built for front office analysts, coaching staffs, and player development.
 
 **[Live App →](https://abs-challenge.vercel.app/)**
 
 ## What It Does
 
-When a pitch is called, the batter, catcher, or pitcher has seconds to decide: challenge or hold? This tool quantifies that decision using count-level run expectancy and [Tom Tango's break-even confidence thresholds](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge).
+Under ABS, players have roughly two seconds to decide whether to challenge an umpire's call — with no outside help. This tool quantifies that decision using count-level run expectancy and [Tom Tango's break-even confidence thresholds](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge).
 
 The core model:
 
@@ -28,9 +28,13 @@ Per [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/articl
 
 **Simulator** — Set count, outs, base runners, and perspective (batting/pitching). See the break-even confidence threshold, run expectancy, and challenge recommendation for every valid transition.
 
-**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score with team abbreviations. Schedule refreshes every 30 seconds to keep all game buttons current. On game selection, preloads season xwOBA for both rosters via a [Vercel serverless endpoint](#xwoba-api) and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter-pitcher pairing relative to league average.
+**Signal Mode** — Visual green/red/yellow indicator showing whether to challenge based on zone confidence vs. break-even threshold for the current game state. Designed for training catchers and batters to internalize challenge decisions before game situations.
 
-**World Series Game 7 Demo** — Walk through pivotal at-bats from the LAD-TOR Game 7 with real 2025 Statcast xwOBA data, showing how challenge decisions would have played out under ABS.
+**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score with team abbreviations. On game selection, preloads season xwOBA for both rosters via a [Vercel serverless endpoint](#xwoba-api) and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter-pitcher pairing relative to league average.
+
+**Trackman Integration** — Accepts pitch location data via CSV upload, coordinate paste, or websocket connection. Supports Trackman V3 native field names (`PlateLocSide`, `PlateLocHeight`, `PitchCall`), Statcast aliases (`plate_x`, `plate_z`), and shorthand — case-insensitive, first match wins. Zone confidence is calculated automatically using a Gaussian model (σ=1.0") based on pitch distance from the zone edge.
+
+**World Series Game 7 Demo** — Walk through 8 pivotal at-bats from the LAD-TOR Game 7 with real 2025 Statcast xwOBA data, showing how challenge decisions would have played out under ABS.
 
 **Terminal Transitions** — Models strikeouts and walks as full base-out state changes, not just count changes. Overturning a ball on an x-2 count produces a strikeout (outs +1, runners stay). Overturning a strike on a 3-x count produces a walk (batter to 1st, forced runners advance, bases-loaded walk scores a run).
 
@@ -50,7 +54,7 @@ Per [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/articl
 | **ΔRE** | Run expectancy difference between the called count and corrected count, including terminal K/BB state changes |
 | **Challenge Cost** | ~0.20 runs — empirical average from 2025 AAA data, flat across innings and inventory ([Tango, Feb 2025](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge)) |
 | **Matchup Multiplier** | xwOBA-based scaling of ΔRE for the current batter-pitcher pairing vs. league average (live and demo modes) |
-| **Confidence** | User's estimate of challenge success probability |
+| **Zone Confidence** | Gaussian probability estimate based on pitch distance from zone edge (σ=1.0"), computed from Trackman or Statcast pitch coordinates |
 
 ```
 batterFactor  = batterXwOBA / leagueXwOBA
@@ -62,6 +66,18 @@ Break-even = 0.20 / (|adjustedΔRE| + 0.20)
 ```
 
 A league-average matchup produces a multiplier of ~1.0×. An elite hitter facing a weak pitcher pushes ×1.3+, lowering the break-even threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar.
+
+## Zone Model
+
+Zone confidence is calculated automatically from pitch location data:
+
+```
+zoneWidth  = (17 + 2.9) / 12    // plate width + ball diameter, in feet
+distance   = pitch distance from nearest zone edge
+confidence = Φ(distance / σ)     // σ = 1.0 inch
+```
+
+Strike zone boundaries use `sz_top` and `sz_bot` from Statcast when available, or configurable defaults (3.5 / 1.6 ft) for Trackman data where per-batter zone heights are not included in the CSV.
 
 ## xwOBA API
 
@@ -75,8 +91,8 @@ The app includes a Vercel serverless function (`/api/xwoba`) that fetches season
 ### Known Limitations
 
 - xwOBA uses full-season Statcast data — doesn't capture platoon splits, recent form, or pitch-type matchup edges
-- Challenge confidence is manual input; production would use Hawk-Eye pitch location data to estimate success probability automatically
-- Schedule polling (30s) means non-selected game buttons can lag slightly behind real-time
+- Trackman V3 CSVs do not include per-batter strike zone heights or umpire identity — these must be added manually or configured in the UI
+- Zone confidence model assumes Gaussian error distribution; real tracking system accuracy may vary
 
 ## Quick Start
 
@@ -100,12 +116,13 @@ npx vercel --prod
 
 ## Tech
 
-Single-file React application (~830 lines in `src/App.jsx`). No external dependencies beyond React.
+Single-file React application (`src/App.jsx`). No external dependencies beyond React.
 
 - React hooks for state management (`useState`, `useMemo`, `useEffect`, `useRef`)
 - [MLB Stats API](https://statsapi.mlb.com/api/v1) for live game data and player stats
 - [Baseball Savant](https://baseballsavant.mlb.com) for season xwOBA (via serverless API)
 - Vercel serverless function for xwOBA data (`api/xwoba.js`)
+- Trackman V3 / Statcast pitch data via CSV, websocket, or coordinate paste
 - CSS-in-JS (inline styles, no build dependencies)
 - Responsive layout with collapsible math details on mobile
 
