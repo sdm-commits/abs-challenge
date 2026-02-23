@@ -1684,7 +1684,7 @@ function ChallengeCard({r,persp,mode}){
   const tier=r.tier;
 
   return(
-    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"visible",opacity:r.rel?1:.45}}>
+    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"hidden",opacity:r.rel?1:.45}}>
       <div style={{padding:"12px 14px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
           <span style={{fontSize:11,fontWeight:600,color:r.type==="s2b"?green:red}}>{r.label}</span>
@@ -1705,8 +1705,11 @@ function ChallengeCard({r,persp,mode}){
             </div>
           </div>
 
-          {/* Confidence meter */}
-          {r.rel&&<ThresholdDisplay thresh={r.thresh} transBE={r.transBE} pD={r.pD}/>}
+          {/* Break-even meter */}
+          {r.rel&&<div style={{textAlign:"center",flexShrink:0}}>
+            <div style={{fontSize:8,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Break-Even</div>
+            <ConfidenceNum thresh={r.transBE}/>
+          </div>}
         </div>
 
         <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:10,color:"#9ca3af",fontFamily:"inherit",display:"flex",alignItems:"center",gap:3}}>
@@ -1725,28 +1728,7 @@ function ChallengeCard({r,persp,mode}){
             <div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Raw ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.dRE>0?green:r.dRE<0?red:"#6b7280"}}>{r.dRE>0?"+":""}{fmt(r.dRE)}</div></div>
             {r.mult!==1&&<><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>×</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Matchup</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:mpct>0?green:mpct<0?red:"#6b7280"}}>{r.mult.toFixed(2)}×</div></div><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>=</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Adj ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div></div></>}
           </div>
-          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>Tango threshold: {r.thresh}% <span style={{color:"#c4c8cd"}}>·</span> published lookup for this count/bases/outs <span style={{color:"#c4c8cd"}}>·</span> This transition break-even: {r.transBE}% <span style={{color:"#c4c8cd"}}>·</span> 0.20 cost ÷ ({fmt(Math.abs(r.pD))} swing + 0.20 cost)</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ThresholdDisplay({thresh,transBE,pD}){
-  const[showTip,setShowTip]=useState(false);
-  return(
-    <div style={{textAlign:"center",flexShrink:0,position:"relative"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3,marginBottom:3}}>
-        <div style={{fontSize:8,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Conf Needed</div>
-        <div onClick={(e)=>{e.stopPropagation();setShowTip(t=>!t);}} style={{width:12,height:12,borderRadius:"50%",border:"1px solid #d1d5db",background:showTip?"#374151":"#f3f4f6",color:showTip?"#fff":"#9ca3af",fontSize:8,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,transition:"all .15s"}}>?</div>
-      </div>
-      <ConfidenceNum thresh={thresh}/>
-      {showTip&&(
-        <div style={{position:"absolute",top:"100%",right:0,marginTop:6,background:"#1f2937",color:"#fff",fontSize:10,padding:"8px 10px",borderRadius:6,zIndex:10,boxShadow:"0 4px 12px rgba(0,0,0,0.15)",textAlign:"left",width:220,lineHeight:1.5}} onClick={(e)=>e.stopPropagation()}>
-          <div style={{fontWeight:600,marginBottom:4}}>Two ways to read this</div>
-          <div style={{marginBottom:6}}><span style={{color:"#93c5fd",fontWeight:600}}>{thresh}%</span> <span style={{color:"#d1d5db"}}>— Tango threshold for this count/bases/outs. Published lookup value that accounts for the full game state. This is the validated number for the challenge decision.</span></div>
-          <div><span style={{color:"#fcd34d",fontWeight:600}}>{transBE}%</span> <span style={{color:"#d1d5db"}}>— Break-even for this specific transition alone: 0.20 ÷ ({fmt(Math.abs(pD))} + 0.20). Larger RE swing → lower confidence needed.</span></div>
-          <div style={{position:"absolute",top:-4,right:12,width:0,height:0,borderLeft:"4px solid transparent",borderRight:"4px solid transparent",borderBottom:"4px solid #1f2937"}}/>
+          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>This transition break-even: {r.transBE}% <span style={{color:"#c4c8cd"}}>·</span> 0.20 cost ÷ ({fmt(Math.abs(r.pD))} swing + 0.20 cost){"\n"}Tango game-state threshold: {r.thresh}% <span style={{color:"#c4c8cd"}}>·</span> published lookup for this count/bases/outs</div>
         </div>
       )}
     </div>
