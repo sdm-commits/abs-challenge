@@ -1684,7 +1684,7 @@ function ChallengeCard({r,persp,mode}){
   const tier=r.tier;
 
   return(
-    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"hidden",opacity:r.rel?1:.45}}>
+    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"visible",opacity:r.rel?1:.45}}>
       <div style={{padding:"12px 14px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
           <span style={{fontSize:11,fontWeight:600,color:r.type==="s2b"?green:red}}>{r.label}</span>
