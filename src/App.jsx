@@ -118,7 +118,7 @@ function ChallengeContext({analysis,activeCount,persp}){
           {batterCard?(<>
             <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn strike</div>
             <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{batterCard.from} → {batterCard.to}</div>
-            {batterIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>{thresh}% needed</div>}
+            {batterIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Tango: {thresh}%</div>}
           </>):(
             <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No strikes to overturn</div>
           )}
@@ -128,7 +128,7 @@ function ChallengeContext({analysis,activeCount,persp}){
           {catcherCard?(<>
             <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn ball</div>
             <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{catcherCard.from} → {catcherCard.to}</div>
-            {catcherIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>{thresh}% needed</div>}
+            {catcherIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Tango: {thresh}%</div>}
           </>):(
             <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No balls to overturn</div>
           )}
@@ -917,7 +917,9 @@ export default function App(){
       if(!t.terminal){const[tb,ts]=t.to.split("-").map(Number);toThresh=getTangoThresh(b,o,tb,ts);toTier=getTier(toThresh);}
       else if(t.to==="K"){toThresh=null;toTier=null;} // terminal — no further challenge
       else if(t.to==="BB"){toThresh=null;toTier=null;}
-      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,rel:pD>0,mult:matchup.mult};
+      const COST=0.20;
+      const transBE=Math.round(COST/(Math.abs(pD)+COST)*100);
+      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,transBE,rel:pD>0,mult:matchup.mult};
     }).filter(Boolean)};
   },[activeCount,activeOuts,activeBs,persp,matchup]);
 
@@ -1388,7 +1390,7 @@ export default function App(){
                     return(
                       <div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                         <div style={{fontSize:11,color:"#9ca3af"}}>{displayTier.sub}</div>
-                        <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Conf Needed</div><ConfidenceNum thresh={displayThresh}/></div>
+                        <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Tango Thresh</div><ConfidenceNum thresh={displayThresh}/></div>
                       </div>
                     );
                   })()}
@@ -1704,7 +1706,7 @@ function ChallengeCard({r,persp,mode}){
           </div>
 
           {/* Confidence meter */}
-          {r.rel&&<div style={{textAlign:"center",flexShrink:0}}><div style={{fontSize:8,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Conf Needed</div><ConfidenceNum thresh={r.thresh}/></div>}
+          {r.rel&&<div style={{textAlign:"center",flexShrink:0}}><div style={{fontSize:8,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Tango Thresh</div><ConfidenceNum thresh={r.thresh}/><div style={{fontSize:8,color:"#b0b5bd",marginTop:2}}>BE: {r.transBE}%</div></div>}
         </div>
 
         <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",padding:0,fontSize:10,color:"#9ca3af",fontFamily:"inherit",display:"flex",alignItems:"center",gap:3}}>
@@ -1723,7 +1725,7 @@ function ChallengeCard({r,persp,mode}){
             <div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Raw ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.dRE>0?green:r.dRE<0?red:"#6b7280"}}>{r.dRE>0?"+":""}{fmt(r.dRE)}</div></div>
             {r.mult!==1&&<><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>×</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Matchup</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:mpct>0?green:mpct<0?red:"#6b7280"}}>{r.mult.toFixed(2)}×</div></div><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>=</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Adj ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div></div></>}
           </div>
-          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>Break-even confidence: {r.thresh}% · Based on Tango's challenge thresholds (RE swing vs. ~0.20 run challenge cost)</div>
+          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>Tango threshold: {r.thresh}% <span style={{color:"#c4c8cd"}}>·</span> accounts for all transitions at this game state <span style={{color:"#c4c8cd"}}>·</span> This transition break-even: {r.transBE}% <span style={{color:"#c4c8cd"}}>·</span> 0.20 cost ÷ ({fmt(Math.abs(r.pD))} swing + 0.20 cost)</div>
         </div>
       )}
     </div>
