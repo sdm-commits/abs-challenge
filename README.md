@@ -26,7 +26,19 @@ Per [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/articl
 
 ## Features
 
-**Simulator** — Set count, outs, base runners, and perspective (batting/pitching). See the break-even confidence threshold, run expectancy, and challenge recommendation for every valid transition.
+**Simulator** — Set count, outs, base runners, and perspective (batting/pitching). See the break-even confidence threshold, run expectancy, and challenge recommendation for every valid transition. Includes a "Two inputs, one decision" explainer showing how break-even (from game state) and zone confidence (from pitch location) combine to drive the challenge/hold decision.
+
+**Training Mode** — Timed flashcard drills that test challenge decisions under pressure. Each round presents a game state and pitch location, gives you 2 seconds to decide challenge or accept, then reveals a tiered verdict based on both zone confidence and break-even math.
+
+- **Six verdict tiers**: 🎯 Perfect, 🧊 Disciplined hold, 👁 Smart but costly, 🤏 Tough hold, ⚠ Missed opportunity, ✗ Bad challenge — each with a plain-English explanation of what happened and why.
+- **Three difficulty levels**: Level 1 (obvious calls, extreme game states), Level 2 (mid-range thresholds, the shadow zone), Level 3 (edge cases, borderline pitches near the effective zone boundary). Corner pitches — near two edges simultaneously — appear at levels 2–3.
+- **Challenge budget modes**: Unlimited (practice), 2 challenges (MLB rules), or 1 challenge (hard mode). Incorrect challenges cost inventory; correct challenges are free. Round ends when you're out. Summary includes a budget narrative contrasting your worst wasted challenge against your biggest missed opportunity.
+- **Historical games**: A selectable library of real Statcast pitch data from famous games. Includes 2025 World Series Game 7, 2024 AL Wild Card Game 3, Angel Hernandez's worst game, and Domingo Germán's perfect game. Each pitch has real coordinates, batter/pitcher names, pitch type and speed, and contextual notes explaining why the pitch mattered.
+- **Adaptive difficulty**: Tracks rolling accuracy over the last 5 cards. At 80%+ perfect rate, pitch offsets tighten (down to 0.3× at 100%). At level 3 with adaptation active, 60% of game states are drawn from a coin-flip pool where break-even is 36–60% — the true toss-up decisions where zone confidence and break-even converge.
+- **Tug of war on reveal**: After every pitch, the reveal card shows both sides of the overturn — "Overturn strike" vs "Overturn ball" — with run swings and a proportional bar showing who has more to gain. Teaches that every challenge is asymmetric between batter and catcher.
+- **Break-even intuition**: A one-sentence explanation on every reveal card connecting the game state to the break-even in plain English. "Loaded, 2 out — overturning this walk scores a run. The swing is huge, so even a small read justifies the challenge."
+- **RE decision ledger**: Running total of run expectancy lost to suboptimal decisions. 0.000 is perfect — every mistake shows a negative cost vs the optimal action. Displayed per-card on reveal and as the summary headline.
+- **Replay reel**: Summary screen opens with a horizontal strip of mini zone graphics for every pitch in the round, color-coded by verdict with emoji badges and zone confidence. Spot patterns at a glance — "all my mistakes were high pitches" or "I kept biting on the inside corner."
 
 **Signal Mode** — Visual green/red/yellow indicator showing whether to challenge based on zone confidence vs. break-even threshold for the current game state. Designed for training catchers and batters to internalize challenge decisions before game situations.
 
