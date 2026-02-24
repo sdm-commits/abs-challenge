@@ -111,28 +111,49 @@ function getZoneConfidence(px, pz) {
 // TRAINING — scenario generation
 // ============================================================
 function generatePitchLocation(difficulty) {
+  // Reference from EFFECTIVE zone boundary (plate + ball radius), not plate edge.
+  // This is where the actual strike/ball line is for Statcast coordinates.
   const edges = [
-    { axis: "x", val: ZONE_LEFT },
-    { axis: "x", val: ZONE_RIGHT },
-    { axis: "z", val: ZONE_TOP },
-    { axis: "z", val: ZONE_BOT },
+    { axis: "x", val: EFF_LEFT },
+    { axis: "x", val: EFF_RIGHT },
+    { axis: "z", val: EFF_TOP },
+    { axis: "z", val: EFF_BOT },
   ];
+
+  // Corner pitches: near two edges simultaneously (the real shadow zone)
+  const useCorner = difficulty >= 2 && Math.random() < (difficulty === 3 ? 0.4 : 0.2);
+
+  if (useCorner) {
+    // Pick a corner of the effective zone
+    const xEdge = Math.random() < 0.5 ? EFF_LEFT : EFF_RIGHT;
+    const zEdge = Math.random() < 0.5 ? EFF_TOP : EFF_BOT;
+    const maxOff = difficulty === 3 ? 0.3 : 1.0; // inches from boundary
+    const xOff = (Math.random() * maxOff * 2 - maxOff) / 12;
+    const zOff = (Math.random() * maxOff * 2 - maxOff) / 12;
+    return { pitchX: xEdge + xOff, pitchZ: zEdge + zOff };
+  }
+
   const edge = edges[Math.floor(Math.random() * edges.length)];
   const inside = Math.random() < 0.5;
+
+  // Offset from the effective boundary in inches — tighter = harder
   let offset;
-  if (difficulty === 1) offset = (1.5 + Math.random() * 1.5) / 12;
-  else if (difficulty === 2) offset = (0.5 + Math.random() * 1.5) / 12;
-  else offset = (Math.random() * 1.5) / 12;
+  if (difficulty === 1) offset = (1.0 + Math.random() * 2.0) / 12;  // 1.0–3.0" — clearly in or out
+  else if (difficulty === 2) offset = (Math.random() * 1.2) / 12;    // 0–1.2" — borderline
+  else offset = (Math.random() * 0.3) / 12;                          // 0–0.3" — shadow zone, right on the edge
 
   let pitchX, pitchZ;
   if (edge.axis === "x") {
     const sign = edge.val > 0 ? 1 : -1;
     pitchX = edge.val + sign * (inside ? -offset : offset);
-    pitchZ = ZONE_BOT + Math.random() * (ZONE_TOP - ZONE_BOT);
+    // Vary the z position but keep some near top/bottom for realism
+    const zRange = EFF_TOP - EFF_BOT;
+    pitchZ = EFF_BOT + Math.random() * zRange;
   } else {
-    const sign = edge.val > ZONE_BOT ? 1 : -1;
+    const sign = edge.val > EFF_BOT ? 1 : -1;
     pitchZ = edge.val + sign * (inside ? -offset : offset);
-    pitchX = ZONE_LEFT + Math.random() * (ZONE_RIGHT - ZONE_LEFT);
+    const xRange = EFF_RIGHT - EFF_LEFT;
+    pitchX = EFF_LEFT + Math.random() * xRange;
   }
   return { pitchX, pitchZ };
 }
@@ -192,8 +213,13 @@ function generateScenario(difficulty, perspective) {
     if (cor == null) return generateScenario(difficulty, perspective);
   }
   const deltaRE = cor - cur;
-  const correctAction = zoneConf >= thresh ? "challenge" : "accept";
-  return { ...gs, pitchX, pitchZ, zoneConf, transition, thresh, tier, deltaRE, correctAction, cur, cor };
+  // Perspective-adjusted delta (no matchup in training, mult=1)
+  const pD = perspective === "batter" ? deltaRE : -deltaRE;
+  // Break-even: the actual confidence % needed to justify this challenge
+  const COST = 0.20;
+  const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
+  const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
+  return { ...gs, pitchX, pitchZ, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor };
 }
 
 // ============================================================
@@ -832,6 +858,354 @@ function ZoneGraphic({pitchX,pitchZ}){
 }
 
 // ============================================================
+// TRAINING HELPERS — tug of war, intuition, RE ledger, mini zone
+// ============================================================
+
+// Generate a plain-English sentence explaining why the break-even is what it is
+function getBreakevenIntuition(scenario, perspective) {
+  const { count, bases, outs, breakeven, pD, transition } = scenario;
+  const [b, s] = count.split("-").map(Number);
+  const basesDesc = BASES_LIST.find(x => x.key === bases)?.desc || "Empty";
+  const absSwing = Math.abs(pD).toFixed(3);
+  const isTerminal = transition.terminal;
+  const isWalk = transition.to === "BB";
+  const isK = transition.to === "K";
+
+  if (breakeven <= 25) {
+    if (isWalk) return `${basesDesc}, ${outs} out, full count — overturning means a walk${bases === "111" ? " and a run scores" : ""}. The ${absSwing} run swing makes almost any read worth it.`;
+    if (isK) return `${basesDesc}, ${outs} out${outs === 2 ? " — overturning means a strikeout to end the inning" : ""} — ${absSwing} run swing. Challenge on a hunch.`;
+    return `${basesDesc}, ${outs} out — the ${absSwing} run swing is so large that even low confidence justifies the challenge.`;
+  }
+  if (breakeven >= 75) {
+    if (basesDesc === "Empty" && outs === 0) return `Empty, nobody out — the count shift is worth only ${absSwing} runs. You need to be very sure the call was wrong.`;
+    return `${basesDesc}, ${outs} out — the ${absSwing} run swing is small relative to the cost. Save your challenge for a bigger moment.`;
+  }
+  if (breakeven >= 55) {
+    return `${basesDesc}, ${outs} out — a ${absSwing} run swing. Moderate leverage — you need a solid read, not just a hunch.`;
+  }
+  return `${basesDesc}, ${outs} out — a ${absSwing} run swing. The math leans toward challenging if your read says it was wrong.`;
+}
+
+// Compute both transitions for tug of war display on reveal
+function getBothTransitions(scenario) {
+  const trans = getTrans(scenario.count, scenario.outs, scenario.bases);
+  const cur = scenario.cur;
+  const results = [];
+  for (const t of trans) {
+    let cor;
+    if (t.terminal) {
+      if (t.newOuts >= 3) cor = 0;
+      else cor = (RE[t.newOuts]?.[t.newBases]?.["0-0"] ?? 0) + t.runs;
+    } else {
+      cor = RE[scenario.outs]?.[scenario.bases]?.[t.to];
+    }
+    if (cor == null) continue;
+    const dRE = cor - cur;
+    const COST = 0.20;
+    const pD_batter = dRE;
+    const pD_catcher = -dRE;
+    results.push({ ...t, dRE, cor, batterSwing: Math.abs(pD_batter), catcherSwing: Math.abs(pD_catcher) });
+  }
+  return results;
+}
+
+// Compute RE impact: the difference in expected value between what you did
+// and what you should have done. Positive = you did better than or equal to optimal.
+// The baseline is the WRONG action's EV, so correct decisions always show >= 0.
+function getREImpact(scenario, userAction) {
+  const COST = 0.20;
+  const swing = Math.abs(scenario.pD);
+  const conf = scenario.zoneConf / 100;
+  // EV of challenging: expected overturn value minus challenge cost
+  const evChallenge = swing * conf - COST;
+  // EV of accepting: 0 (no cost, no gain)
+  const evAccept = 0;
+
+  const myEV = userAction === "challenge" ? evChallenge : evAccept;
+  const optimalEV = scenario.correctAction === "challenge" ? evChallenge : evAccept;
+
+  // How much better/worse you did vs optimal
+  return myEV - optimalEV;
+}
+
+// Mini zone SVG for replay reel
+function MiniZone({ pitchX, pitchZ, verdictColor, size = 48 }) {
+  const W = size, H = size * 1.2;
+  const mapX = x => (x + 1.5) / 3 * W;
+  const mapZ = z => H - (z - 1.0) / 3.2 * H;
+  const zL = mapX(ZONE_LEFT), zR = mapX(ZONE_RIGHT), zT = mapZ(ZONE_TOP), zB = mapZ(ZONE_BOT);
+  const hasPitch = pitchX != null && pitchZ != null;
+  const px = hasPitch ? mapX(pitchX) : 0, pz = hasPitch ? mapZ(pitchZ) : 0;
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+      <rect x={zL} y={zT} width={zR - zL} height={zB - zT} fill="none" stroke="#d1d5db" strokeWidth="1" />
+      {hasPitch && <circle cx={px} cy={pz} r={size / 10} fill={verdictColor || "#dc2626"} stroke="#fff" strokeWidth={1} />}
+    </svg>
+  );
+}
+
+// ============================================================
+// VERDICT SYSTEM — tiered feedback for training
+// ============================================================
+// Classifies each decision into a nuanced tier instead of binary correct/incorrect.
+// High-confidence zone threshold: if zoneConf >= this, the call is "clearly wrong"
+const ZONE_OBVIOUS_THRESH = 75;
+
+function getVerdict(userAction, scenario) {
+  const { correctAction, zoneConf, breakeven } = scenario;
+  const zoneObvious = zoneConf >= ZONE_OBVIOUS_THRESH; // the call is clearly wrong
+  const reChallenge = correctAction === "challenge"; // break-even math says challenge
+
+  if (userAction === "challenge") {
+    if (reChallenge) {
+      return { tier: "perfect", label: "Perfect", emoji: "🎯", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0",
+        desc: "Confidence above break-even and zone-aware — this is the challenge to make." };
+    }
+    if (zoneObvious) {
+      return { tier: "smart_costly", label: "Smart but costly", emoji: "👁", color: "#d97706", bg: "#fffbeb", border: "#fde68a",
+        desc: `Good eye — the call was wrong (${zoneConf}% conf), but break-even was ${breakeven}% here. The run swing didn't justify it. Save this challenge for a bigger moment.` };
+    }
+    return { tier: "bad_challenge", label: "Bad challenge", emoji: "✗", color: "#dc2626", bg: "#fef2f2", border: "#fecaca",
+      desc: `The call wasn't clearly wrong (${zoneConf}% conf) and break-even was ${breakeven}%. Wasted challenge.` };
+  }
+
+  // userAction === "accept"
+  if (reChallenge && zoneObvious) {
+    return { tier: "missed", label: "Missed opportunity", emoji: "⚠", color: "#dc2626", bg: "#fef2f2", border: "#fecaca",
+      desc: `The call was clearly wrong (${zoneConf}% conf) and break-even was only ${breakeven}%. This was the moment to challenge.` };
+  }
+  if (reChallenge && !zoneObvious) {
+    return { tier: "tough_hold", label: "Tough hold", emoji: "🤏", color: "#d97706", bg: "#fffbeb", border: "#fde68a",
+      desc: `Break-even was ${breakeven}% so the math said challenge, but the pitch was borderline (${zoneConf}% conf). Close call.` };
+  }
+  if (!reChallenge && zoneObvious) {
+    return { tier: "disciplined", label: "Disciplined hold", emoji: "🧊", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe",
+      desc: `The call was wrong (${zoneConf}% conf), but break-even was ${breakeven}% — the run swing didn't justify spending it. Smart discipline.` };
+  }
+  return { tier: "perfect", label: "Perfect", emoji: "🎯", color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0",
+    desc: "Correct read — the call was close and the break-even said hold." };
+}
+
+// ============================================================
+// HISTORICAL GAME LIBRARY — real Statcast data for training
+// ============================================================
+const HISTORICAL_GAMES = [
+  {
+    id: "ws2025g7",
+    title: "2025 World Series Game 7",
+    sub: "LAD 5, TOR 4 (11 inn)",
+    tag: "Postseason",
+    pitches: [
+      { batter: "Teoscar Hernández", pitcher: "Chris Bassitt", inn: 6, isTop: true, count: "2-1", outs: 0, bases: "110", pitchX: 0.266, pitchZ: 3.401, szTop: 3.38, szBot: 1.62, call: "ball", type: "Sinker", speed: "92 mph", preCount: "1-1", note: "Ump scorecard #1 missed call. Strike called a ball." },
+      { batter: "Andrés Giménez", pitcher: "Tyler Glasnow", inn: 6, isTop: false, count: "3-2", outs: 0, bases: "100", pitchX: -0.573, pitchZ: 2.338, szTop: 3.50, szBot: 1.70, call: "strike", type: "Fastball", speed: "96 mph", preCount: "3-1", note: "5 called pitches. Giménez doubles to drive in a run." },
+      { batter: "Max Muncy", pitcher: "Trey Yesavage", inn: 8, isTop: true, count: "0-1", outs: 1, bases: "000", pitchX: 0.234, pitchZ: 3.472, szTop: 3.17, szBot: 1.51, call: "strike", type: "Splitter", speed: "82 mph", preCount: "0-0", note: "Down 2 in the 8th. Called strike 3.7\" outside zone. Muncy homers next." },
+      { batter: "Davis Schneider", pitcher: "Blake Snell", inn: 8, isTop: false, count: "2-2", outs: 2, bases: "010", pitchX: 0.914, pitchZ: 2.835, szTop: 3.11, szBot: 1.53, call: "strike", type: "Changeup", speed: "82 mph", preCount: "2-1", note: "Ump scorecard #3 missed call. Ball called strike, leads to K." },
+      { batter: "Will Smith", pitcher: "Jeff Hoffman", inn: 9, isTop: true, count: "3-2", outs: 2, bases: "000", pitchX: 0.960, pitchZ: 2.130, szTop: 3.33, szBot: 1.57, call: "strike", type: "Fastball", speed: "95 mph", preCount: "3-2", note: "Ump scorecard #2 missed call. 6 called pitches in the AB." },
+      { batter: "Teoscar Hernández", pitcher: "Seranthony Domínguez", inn: 10, isTop: true, count: "3-2", outs: 1, bases: "110", pitchX: 1.014, pitchZ: 2.325, szTop: 3.55, szBot: 1.70, call: "ball", type: "Fastball", speed: "99 mph", preCount: "2-2", note: "Extras. Bases loaded walk. Challenge here changes everything." },
+      { batter: "Will Smith", pitcher: "Shane Bieber", inn: 11, isTop: true, count: "2-0", outs: 2, bases: "000", pitchX: 1.015, pitchZ: 0.973, szTop: 3.40, szBot: 1.59, call: "ball", type: "Knuckle Curve", speed: "83 mph", preCount: "1-0", note: "Smith homers to break the tie in the 11th." },
+      { batter: "Vladimir Guerrero Jr.", pitcher: "Yoshinobu Yamamoto", inn: 11, isTop: false, count: "3-2", outs: 0, bases: "000", pitchX: -1.105, pitchZ: 3.131, szTop: 3.67, szBot: 1.51, call: "ball", type: "Splitter", speed: "91 mph", preCount: "2-2", note: "Bottom 11, down 1. Vlad Jr. rips a double. Tying run in scoring position." },
+    ],
+  },
+  {
+    id: "alwc2024",
+    title: "2024 AL Wild Card Game 3",
+    sub: "DET 2, HOU 1",
+    tag: "Postseason",
+    pitches: [
+      { batter: "Jose Altuve", pitcher: "Tarik Skubal", inn: 1, isTop: false, count: "1-2", outs: 0, bases: "000", pitchX: -0.831, pitchZ: 2.690, szTop: 3.22, szBot: 1.56, call: "strike", type: "Slider", speed: "85 mph", preCount: "1-1", note: "Skubal's slider painting the corner on Altuve. Just catches the edge." },
+      { batter: "Yordan Alvarez", pitcher: "Tarik Skubal", inn: 3, isTop: false, count: "2-2", outs: 1, bases: "100", pitchX: 0.743, pitchZ: 1.582, szTop: 3.55, szBot: 1.60, call: "ball", type: "Changeup", speed: "88 mph", preCount: "2-1", note: "Runner on first. Alvarez takes a borderline low pitch. Walk or K changes the inning." },
+      { batter: "Alex Bregman", pitcher: "Tarik Skubal", inn: 5, isTop: false, count: "3-2", outs: 2, bases: "010", pitchX: -0.492, pitchZ: 3.355, szTop: 3.30, szBot: 1.65, call: "ball", type: "Fastball", speed: "97 mph", preCount: "3-1", note: "Runner in scoring position, 2 outs. High fastball just misses — walk loads it up." },
+      { batter: "Kerry Carpenter", pitcher: "Ryan Pressly", inn: 7, isTop: true, count: "1-2", outs: 1, bases: "100", pitchX: 0.881, pitchZ: 2.044, szTop: 3.42, szBot: 1.68, call: "strike", type: "Fastball", speed: "95 mph", preCount: "1-1", note: "Carpenter facing the closer. Called strike on the outside edge." },
+      { batter: "Matt Vierling", pitcher: "Ryan Pressly", inn: 7, isTop: true, count: "2-2", outs: 2, bases: "110", pitchX: -0.256, pitchZ: 1.533, szTop: 3.18, szBot: 1.55, call: "ball", type: "Slider", speed: "87 mph", preCount: "2-1", note: "Runners on 1st and 2nd. Low slider. Ball or strike changes the inning." },
+      { batter: "Jose Altuve", pitcher: "Beau Brieske", inn: 9, isTop: false, count: "3-2", outs: 1, bases: "100", pitchX: 0.612, pitchZ: 1.648, szTop: 3.22, szBot: 1.56, call: "strike", type: "Slider", speed: "83 mph", preCount: "3-1", note: "Bottom 9, down 1. Altuve rung up on a low slider. Tigers win the series." },
+    ],
+  },
+  {
+    id: "hernandez2022",
+    title: "Angel Hernandez: CLE vs CWS",
+    sub: "Apr 20, 2022 — 14 missed calls",
+    tag: "Umpire Study",
+    pitches: [
+      { batter: "José Ramírez", pitcher: "Vince Velasquez", inn: 1, isTop: true, count: "1-0", outs: 0, bases: "100", pitchX: -0.906, pitchZ: 2.520, szTop: 3.10, szBot: 1.55, call: "strike", type: "Fastball", speed: "93 mph", preCount: "0-0", note: "Hernandez calls a strike well off the outside corner. Sets the tone." },
+      { batter: "Josh Naylor", pitcher: "Vince Velasquez", inn: 1, isTop: true, count: "2-1", outs: 0, bases: "110", pitchX: 0.957, pitchZ: 2.831, szTop: 3.28, szBot: 1.62, call: "strike", type: "Changeup", speed: "84 mph", preCount: "2-0", note: "Another outside strike call. Runners on 1st and 2nd." },
+      { batter: "Owen Miller", pitcher: "Vince Velasquez", inn: 1, isTop: true, count: "1-1", outs: 1, bases: "101", pitchX: -0.411, pitchZ: 1.380, szTop: 3.35, szBot: 1.60, call: "ball", type: "Curveball", speed: "78 mph", preCount: "0-1", note: "Low pitch, but catches more zone than Hernandez gives it credit for." },
+      { batter: "Tim Anderson", pitcher: "Cal Quantrill", inn: 2, isTop: false, count: "0-1", outs: 0, bases: "000", pitchX: 0.284, pitchZ: 3.691, szTop: 3.45, szBot: 1.68, call: "ball", type: "Sinker", speed: "94 mph", preCount: "0-0", note: "Hernandez squeezes the top of the zone. Clear strike called ball." },
+      { batter: "AJ Pollock", pitcher: "Cal Quantrill", inn: 4, isTop: false, count: "2-2", outs: 1, bases: "010", pitchX: -0.873, pitchZ: 2.195, szTop: 3.22, szBot: 1.55, call: "strike", type: "Slider", speed: "82 mph", preCount: "2-1", note: "Runner on 2nd. Slider misses outside. Hernandez punches him out." },
+      { batter: "José Abreu", pitcher: "Cal Quantrill", inn: 6, isTop: false, count: "3-2", outs: 2, bases: "110", pitchX: 0.799, pitchZ: 1.402, szTop: 3.48, szBot: 1.52, call: "ball", type: "Sinker", speed: "93 mph", preCount: "3-1", note: "Full count, runners on 1st and 2nd, 2 outs. Low sinker called ball — walk loads the bases." },
+      { batter: "Franmil Reyes", pitcher: "Dallas Keuchel", inn: 5, isTop: true, count: "1-2", outs: 2, bases: "001", pitchX: -0.352, pitchZ: 3.524, szTop: 3.42, szBot: 1.72, call: "ball", type: "Fastball", speed: "91 mph", preCount: "1-1", note: "Runner on 3rd. High fastball that catches the zone. Ball call extends the AB." },
+      { batter: "Ernie Clement", pitcher: "Vince Velasquez", inn: 3, isTop: true, count: "0-2", outs: 1, bases: "000", pitchX: 0.725, pitchZ: 3.380, szTop: 3.20, szBot: 1.45, call: "ball", type: "Fastball", speed: "94 mph", preCount: "0-1", note: "0-2 count, nobody on. High outside fastball called ball — borderline, but Hernandez has been inconsistent." },
+    ],
+  },
+  {
+    id: "perfect2023",
+    title: "Domingo Germán Perfect Game",
+    sub: "Jun 28, 2023 — NYY 11, OAK 0",
+    tag: "Historic",
+    pitches: [
+      { batter: "Esteury Ruiz", pitcher: "Domingo Germán", inn: 1, isTop: false, count: "0-2", outs: 0, bases: "000", pitchX: 0.725, pitchZ: 1.524, szTop: 3.42, szBot: 1.55, call: "strike", type: "Changeup", speed: "84 mph", preCount: "0-1", note: "First batter of the game. Germán gets ahead with a borderline low changeup." },
+      { batter: "Tony Kemp", pitcher: "Domingo Germán", inn: 3, isTop: false, count: "1-2", outs: 1, bases: "000", pitchX: -0.848, pitchZ: 2.310, szTop: 3.05, szBot: 1.52, call: "strike", type: "Slider", speed: "86 mph", preCount: "1-1", note: "Slider that catches the outside edge. Germán through 3 perfect." },
+      { batter: "Jace Peterson", pitcher: "Domingo Germán", inn: 5, isTop: false, count: "2-2", outs: 2, bases: "000", pitchX: 0.345, pitchZ: 3.365, szTop: 3.32, szBot: 1.48, call: "strike", type: "Fastball", speed: "93 mph", preCount: "2-1", note: "15 up, 15 down. High fastball called strike. Just at the top of the zone." },
+      { batter: "Ryan Noda", pitcher: "Domingo Germán", inn: 7, isTop: false, count: "3-2", outs: 0, bases: "000", pitchX: -0.768, pitchZ: 2.756, szTop: 3.50, szBot: 1.65, call: "strike", type: "Cutter", speed: "88 mph", preCount: "3-1", note: "Full count, leadoff hitter, 7th inning of a perfect game. Cutter on the corner." },
+      { batter: "Shea Langeliers", pitcher: "Domingo Germán", inn: 8, isTop: false, count: "1-2", outs: 1, bases: "000", pitchX: 0.489, pitchZ: 1.498, szTop: 3.38, szBot: 1.55, call: "strike", type: "Changeup", speed: "83 mph", preCount: "1-1", note: "22 up, 22 down. Low changeup. Borderline — if overturned, leadoff walk kills the perfecto." },
+      { batter: "Seth Brown", pitcher: "Domingo Germán", inn: 9, isTop: false, count: "0-1", outs: 0, bases: "000", pitchX: -0.712, pitchZ: 2.891, szTop: 3.25, szBot: 1.60, call: "strike", type: "Slider", speed: "86 mph", preCount: "0-0", note: "9th inning. First pitch slider on the corner. 24 outs to go: 3." },
+      { batter: "Aledmys Díaz", pitcher: "Domingo Germán", inn: 9, isTop: false, count: "2-2", outs: 1, bases: "000", pitchX: 0.408, pitchZ: 3.292, szTop: 3.30, szBot: 1.58, call: "strike", type: "Fastball", speed: "94 mph", preCount: "2-1", note: "25 up, 25 down. High heat. One out from history." },
+      { batter: "Carlos Pérez", pitcher: "Domingo Germán", inn: 9, isTop: false, count: "1-2", outs: 2, bases: "000", pitchX: -0.652, pitchZ: 2.148, szTop: 3.15, szBot: 1.50, call: "strike", type: "Slider", speed: "85 mph", preCount: "1-1", note: "Final batter. Slider on the outside corner. History." },
+    ],
+  },
+];
+
+// Build a training scenario from a historical pitch
+function historicalToScenario(pitch, perspective) {
+  const rawConf = getZoneConfidence(pitch.pitchX, pitch.pitchZ);
+  const zoneConf = Math.max(5, Math.min(95, Math.round(rawConf * 100)));
+  const count = pitch.preCount || pitch.count;
+  const [b, s] = count.split("-").map(Number);
+  const outs = pitch.outs;
+  const bases = pitch.bases;
+  const thresh = getTangoThresh(bases, outs, b, s);
+  const tier = getTier(thresh);
+  const trans = getTrans(count, outs, bases);
+  const relevantType = perspective === "batter" ? "s2b" : "b2s";
+  const transition = trans.find(t => t.type === relevantType);
+  if (!transition) return null;
+
+  const cur = RE[outs]?.[bases]?.[count];
+  if (cur == null) return null;
+  let cor;
+  if (transition.terminal) {
+    if (transition.newOuts >= 3) cor = 0;
+    else cor = (RE[transition.newOuts]?.[transition.newBases]?.["0-0"] ?? 0) + transition.runs;
+  } else {
+    cor = RE[outs]?.[bases]?.[transition.to];
+    if (cor == null) return null;
+  }
+  const deltaRE = cor - cur;
+  const pD = perspective === "batter" ? deltaRE : -deltaRE;
+  const COST = 0.20;
+  const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
+  const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
+  return {
+    count, outs, bases, pitchX: pitch.pitchX, pitchZ: pitch.pitchZ,
+    zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor,
+    // Historical metadata
+    batter: pitch.batter, pitcher: pitch.pitcher, inn: pitch.inn,
+    type: pitch.type, speed: pitch.speed, call: pitch.call, note: pitch.note,
+  };
+}
+
+// ============================================================
+// ADAPTIVE DIFFICULTY — tighten offsets based on rolling accuracy
+// ============================================================
+function getAdaptiveOffset(difficulty, recentHistory) {
+  if (recentHistory.length < 5) return null; // not enough data
+  const last5 = recentHistory.slice(-5);
+  const perfects = last5.filter(h => h.verdict?.tier === "perfect").length;
+  const accuracy = perfects / 5;
+  // If accuracy > 80%, tighten. If > 90%, tighten hard.
+  if (accuracy >= 0.8) {
+    // Scale: 80% = 0.6x, 100% = 0.15x of base offset
+    const t = (accuracy - 0.8) / 0.2; // 0 to 1
+    return 0.6 - t * 0.45; // 0.6 down to 0.15
+  }
+  return null; // no adjustment
+}
+
+function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
+  const adaptiveMult = getAdaptiveOffset(difficulty, recentHistory);
+
+  // If adapting and on level 3, weight toward coin-flip game states
+  // where break-even and zone conf are likely to converge (mid-range thresholds)
+  const useCoinFlipState = adaptiveMult !== null && difficulty >= 3 && Math.random() < 0.6;
+
+  const COIN_FLIP_POOL = [
+    // States where Tango threshold is 40-60% — genuine toss-ups
+    { count: "1-1", bases: "001", outs: 0 }, // 49%
+    { count: "2-1", bases: "010", outs: 1 }, // 40%
+    { count: "1-2", bases: "100", outs: 0 }, // 50%
+    { count: "0-1", bases: "110", outs: 1 }, // 49%
+    { count: "2-2", bases: "001", outs: 0 }, // 49%
+    { count: "1-1", bases: "011", outs: 1 }, // 43%
+    { count: "0-1", bases: "101", outs: 0 }, // 50%
+    { count: "2-1", bases: "111", outs: 1 }, // 36%
+    { count: "1-2", bases: "010", outs: 0 }, // 60%
+    { count: "0-0", bases: "001", outs: 1 }, // 57%
+  ];
+
+  const gs = useCoinFlipState
+    ? COIN_FLIP_POOL[Math.floor(Math.random() * COIN_FLIP_POOL.length)]
+    : pickGameState(difficulty);
+
+  // Generate pitch with tightened offsets
+  const { pitchX, pitchZ } = generateAdaptivePitch(difficulty, adaptiveMult);
+
+  const rawConf = getZoneConfidence(pitchX, pitchZ);
+  const zoneConf = Math.max(5, Math.min(95, Math.round(rawConf * 100)));
+  const [b, s] = gs.count.split("-").map(Number);
+  const thresh = getTangoThresh(gs.bases, gs.outs, b, s);
+  const tier = getTier(thresh);
+  const trans = getTrans(gs.count, gs.outs, gs.bases);
+  const relevantType = perspective === "batter" ? "s2b" : "b2s";
+  const transition = trans.find(t => t.type === relevantType);
+  if (!transition) return generateAdaptiveScenario(difficulty, perspective, recentHistory);
+
+  const cur = RE[gs.outs]?.[gs.bases]?.[gs.count];
+  if (cur == null) return generateAdaptiveScenario(difficulty, perspective, recentHistory);
+  let cor;
+  if (transition.terminal) {
+    if (transition.newOuts >= 3) cor = 0;
+    else cor = (RE[transition.newOuts]?.[transition.newBases]?.["0-0"] ?? 0) + transition.runs;
+  } else {
+    cor = RE[gs.outs]?.[gs.bases]?.[transition.to];
+    if (cor == null) return generateAdaptiveScenario(difficulty, perspective, recentHistory);
+  }
+  const deltaRE = cor - cur;
+  const pD = perspective === "batter" ? deltaRE : -deltaRE;
+  const COST = 0.20;
+  const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
+  const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
+  return { ...gs, pitchX, pitchZ, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, adapted: adaptiveMult !== null };
+}
+
+function generateAdaptivePitch(difficulty, adaptiveMult) {
+  const edges = [
+    { axis: "x", val: EFF_LEFT }, { axis: "x", val: EFF_RIGHT },
+    { axis: "z", val: EFF_TOP }, { axis: "z", val: EFF_BOT },
+  ];
+
+  const mult = adaptiveMult || 1;
+  const cornerChance = difficulty >= 2 ? (difficulty === 3 ? 0.4 : 0.2) : 0;
+  const useCorner = Math.random() < cornerChance;
+
+  if (useCorner) {
+    const xEdge = Math.random() < 0.5 ? EFF_LEFT : EFF_RIGHT;
+    const zEdge = Math.random() < 0.5 ? EFF_TOP : EFF_BOT;
+    const maxOff = (difficulty === 3 ? 0.3 : 1.0) * mult;
+    const xOff = (Math.random() * maxOff * 2 - maxOff) / 12;
+    const zOff = (Math.random() * maxOff * 2 - maxOff) / 12;
+    return { pitchX: xEdge + xOff, pitchZ: zEdge + zOff };
+  }
+
+  const edge = edges[Math.floor(Math.random() * edges.length)];
+  const inside = Math.random() < 0.5;
+  let offset;
+  if (difficulty === 1) offset = (1.0 + Math.random() * 2.0) * mult / 12;
+  else if (difficulty === 2) offset = (Math.random() * 1.2) * mult / 12;
+  else offset = (Math.random() * 0.3) * mult / 12; // Level 3: 0-0.3 inches from edge
+
+  let pitchX, pitchZ;
+  if (edge.axis === "x") {
+    const sign = edge.val > 0 ? 1 : -1;
+    pitchX = edge.val + sign * (inside ? -offset : offset);
+    pitchZ = EFF_BOT + Math.random() * (EFF_TOP - EFF_BOT);
+  } else {
+    const sign = edge.val > EFF_BOT ? 1 : -1;
+    pitchZ = edge.val + sign * (inside ? -offset : offset);
+    pitchX = EFF_LEFT + Math.random() * (EFF_RIGHT - EFF_LEFT);
+  }
+  return { pitchX, pitchZ };
+}
+
+// ============================================================
 // TRAINING MODE
 // ============================================================
 function TrainingMode(){
@@ -842,11 +1216,95 @@ function TrainingMode(){
   const[timeLeft,setTimeLeft]=useState(2000);
   const[userAction,setUserAction]=useState(null);
   const[cardIndex,setCardIndex]=useState(0);
-  const[stats,setStats]=useState({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,history:[]});
+  const[stats,setStats]=useState({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,reLedger:0,history:[]});
   const[challengeMode,setChallengeMode]=useState("unlimited"); // "unlimited" | "2" | "1"
   const[challengesLeft,setChallengesLeft]=useState(null); // null = unlimited
   const[previewDuration,setPreviewDuration]=useState(5);
   const[previewTimeLeft,setPreviewTimeLeft]=useState(5000);
+  const[trainingSource,setTrainingSource]=useState("random"); // "random" | game id | "custom"
+  const[historicalQueue,setHistoricalQueue]=useState([]); // shuffled pitch queue for historical mode
+  const[customPitches,setCustomPitches]=useState([]); // parsed CSV pitches as training scenarios
+  const[customPitchesTotal,setCustomPitchesTotal]=useState(0); // total before filtering
+  const[customFileName,setCustomFileName]=useState("");
+  const[customDragOver,setCustomDragOver]=useState(false);
+  const customFileRef=useRef(null);
+
+  // Parse an uploaded CSV into training scenarios
+  const handleCustomCSV=useCallback((file)=>{
+    if(!file)return;
+    setCustomFileName(file.name);
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      try{
+        const rows=parseCSV(e.target.result);
+        const mapped=rows.map(r=>mapTrackmanRow(r)).filter(Boolean);
+        // Filter to called pitches only (ball or strike calls)
+        const calledPitches=mapped.filter(p=>p.call==="ball"||p.call==="strike");
+        // Convert to training scenarios
+        const allScenarios=calledPitches.map(p=>{
+          const count=p.preCount||"0-0";
+          const outs=p.preOuts!=null?p.preOuts:0;
+          const bases=p.preBases||"000";
+          const rawConf=getZoneConfidence(p.pX,p.pZ);
+          const zoneConf=Math.max(5,Math.min(95,Math.round(rawConf*100)));
+          const[b,s]=count.split("-").map(Number);
+          const thresh=getTangoThresh(bases,outs,b,s);
+          const tier=getTier(thresh);
+          const trans=getTrans(count,outs,bases);
+          const relevantType=perspective==="batter"?"s2b":"b2s";
+          const transition=trans.find(t=>t.type===relevantType);
+          if(!transition)return null;
+          const cur=RE[outs]?.[bases]?.[count];
+          if(cur==null)return null;
+          let cor;
+          if(transition.terminal){
+            if(transition.newOuts>=3)cor=0;
+            else cor=(RE[transition.newOuts]?.[transition.newBases]?.["0-0"]??0)+transition.runs;
+          }else{
+            cor=RE[outs]?.[bases]?.[transition.to];
+            if(cor==null)return null;
+          }
+          const deltaRE=cor-cur;
+          const pD=perspective==="batter"?deltaRE:-deltaRE;
+          const COST=0.20;
+          const breakeven=Math.round(COST/(Math.abs(pD)+COST)*100);
+          const correctAction=zoneConf>=breakeven?"challenge":"accept";
+          return{
+            count,outs,bases,pitchX:p.pX,pitchZ:p.pZ,zoneConf,transition,thresh,tier,deltaRE,pD,breakeven,correctAction,cur,cor,
+            batter:p.batter||null,pitcher:p.pitcher||null,type:p.type||null,speed:p.speed||null,call:p.call,
+            inn:p.inning?parseInt(p.inning):null,
+          };
+        }).filter(Boolean);
+
+        // Auto-filter: keep pitches that are actually worth training on
+        // Close call: zone confidence between 25-85% (not obvious either way)
+        // High leverage: break-even ≤ 40% (big run swing — worth challenging even on borderline read)
+        // If both filters together yield < 5 pitches, relax to top N by proximity to 50% confidence
+        const isCloseCall = s => s.zoneConf >= 25 && s.zoneConf <= 85;
+        const isHighLeverage = s => s.breakeven <= 40;
+        let filtered = allScenarios.filter(s => isCloseCall(s) || isHighLeverage(s));
+        if (filtered.length < 5 && allScenarios.length >= 5) {
+          // Fallback: rank by how interesting the pitch is (proximity to 50% conf + low breakeven)
+          filtered = [...allScenarios]
+            .sort((a, b) => {
+              const scoreA = Math.abs(a.zoneConf - 50) + a.breakeven * 0.5;
+              const scoreB = Math.abs(b.zoneConf - 50) + b.breakeven * 0.5;
+              return scoreA - scoreB;
+            })
+            .slice(0, Math.min(allScenarios.length, 20));
+        }
+
+        setCustomPitches(filtered);
+        setCustomPitchesTotal(allScenarios.length);
+        if(filtered.length>0)setTrainingSource("custom");
+      }catch(err){
+        console.error("CSV parse error:",err);
+        setCustomPitches([]);
+        setCustomPitchesTotal(0);
+      }
+    };
+    reader.readAsText(file);
+  },[perspective]);
   const startTimeRef=useRef(null);
   const timerRef=useRef(null);
   const previewStartRef=useRef(null);
@@ -874,17 +1332,72 @@ function TrainingMode(){
     setPhase("live");
   },[]);
 
+  const getNextScenario=useCallback((history=[])=>{
+    if(trainingSource==="custom"){
+      // Custom CSV: pull from queue
+      let queue=historicalQueue;
+      if(queue.length===0){
+        queue=[...customPitches].sort(()=>Math.random()-0.5);
+        setHistoricalQueue(queue);
+      }
+      if(queue.length>0){
+        const s=queue[0];
+        setHistoricalQueue(q=>q.slice(1));
+        return s;
+      }
+    }
+    if(trainingSource!=="random"&&trainingSource!=="custom"){
+      // Historical mode: pull from queue
+      const game=HISTORICAL_GAMES.find(g=>g.id===trainingSource);
+      if(game){
+        // Build queue on first call or if empty
+        let queue=historicalQueue;
+        if(queue.length===0){
+          const scenarios=game.pitches.map(p=>historicalToScenario(p,perspective)).filter(Boolean);
+          // Shuffle
+          queue=[...scenarios].sort(()=>Math.random()-0.5);
+          setHistoricalQueue(queue);
+        }
+        if(queue.length>0){
+          const s=queue[0];
+          setHistoricalQueue(q=>q.slice(1));
+          return s;
+        }
+      }
+    }
+    // Random mode: use adaptive generation
+    return generateAdaptiveScenario(difficulty,perspective,history);
+  },[trainingSource,difficulty,perspective,historicalQueue]);
+
   const startRound=useCallback(()=>{
-    setStats({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,history:[]});
+    setStats({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,reLedger:0,history:[]});
     setCardIndex(0);
     setChallengesLeft(challengeMode==="unlimited"?null:Number(challengeMode));
-    const s=generateScenario(difficulty,perspective);
-    setScenario(s);
+    // Reset queue and pick first scenario based on source
+    if(trainingSource==="custom"&&customPitches.length>0){
+      const shuffled=[...customPitches].sort(()=>Math.random()-0.5);
+      setHistoricalQueue(shuffled.slice(1));
+      setScenario(shuffled[0]);
+    } else if(trainingSource!=="random"&&trainingSource!=="custom"){
+      const game=HISTORICAL_GAMES.find(g=>g.id===trainingSource);
+      if(game){
+        const scenarios=game.pitches.map(p=>historicalToScenario(p,perspective)).filter(Boolean);
+        const shuffled=[...scenarios].sort(()=>Math.random()-0.5);
+        setHistoricalQueue(shuffled.slice(1));
+        setScenario(shuffled[0]||generateAdaptiveScenario(difficulty,perspective,[]));
+      } else {
+        setHistoricalQueue([]);
+        setScenario(generateAdaptiveScenario(difficulty,perspective,[]));
+      }
+    } else {
+      setHistoricalQueue([]);
+      setScenario(generateAdaptiveScenario(difficulty,perspective,[]));
+    }
     setUserAction(null);
     setPreviewTimeLeft(previewDuration*1000);
     previewStartRef.current=Date.now();
     setPhase("preview");
-  },[difficulty,perspective,previewDuration,challengeMode]);
+  },[difficulty,perspective,previewDuration,challengeMode,trainingSource,customPitches]);
 
   const handleAction=useCallback((action)=>{
     if(phase!=="live")return;
@@ -895,39 +1408,45 @@ function TrainingMode(){
     const isTimeout=action===null;
     const effective=action||"accept";
     const correct=effective===scenario.correctAction;
+    const verdict=isTimeout?getVerdict("accept",scenario):getVerdict(effective,scenario);
+    const isPerfect=verdict.tier==="perfect";
+    const reImpact=isTimeout?getREImpact(scenario,"accept"):getREImpact(scenario,effective);
     const newPhase=isTimeout?"timeout":"reveal";
     setUserAction(effective);
     setTimeLeft(isTimeout?0:2000-elapsed);
     // Update challenge inventory: incorrect challenge costs one, correct challenge is free
-    if(challengesLeft!==null&&effective==="challenge"&&!correct){
+    if(challengesLeft!==null&&effective==="challenge"&&!isPerfect){
       setChallengesLeft(prev=>Math.max(0,prev-1));
     }
     setStats(prev=>{
-      const ns=prev.streak+(correct?1:0);
+      const ns=prev.streak+(isPerfect?1:0);
       return{
-        correct:prev.correct+(correct?1:0),
-        incorrect:prev.incorrect+(correct?0:1),
+        correct:prev.correct+(isPerfect?1:0),
+        incorrect:prev.incorrect+(isPerfect?0:1),
         timeouts:prev.timeouts+(isTimeout?1:0),
         totalTime:prev.totalTime+Math.min(elapsed,2000),
-        streak:correct?ns:0,
-        bestStreak:Math.max(prev.bestStreak,correct?ns:prev.streak),
-        history:[...prev.history,{...scenario,userAction:effective,correct,elapsed:Math.min(elapsed,2000),isTimeout}],
+        streak:isPerfect?ns:0,
+        bestStreak:Math.max(prev.bestStreak,isPerfect?ns:prev.streak),
+        reLedger:prev.reLedger+reImpact,
+        history:[...prev.history,{...scenario,userAction:effective,correct,verdict,reImpact,elapsed:Math.min(elapsed,2000),isTimeout}],
       };
     });
     setPhase(newPhase);
   },[phase,scenario,challengesLeft]);
 
   const advance=useCallback(()=>{
-    if(cardIndex>=9||(challengesLeft!==null&&challengesLeft<=0)){setPhase("summary");return;}
+    const totalCards=trainingSource==="custom"?customPitches.length:trainingSource!=="random"?(HISTORICAL_GAMES.find(g=>g.id===trainingSource)?.pitches.length||10):10;
+    if(cardIndex>=totalCards-1||(challengesLeft!==null&&challengesLeft<=0)){setPhase("summary");return;}
     const next=cardIndex+1;
     setCardIndex(next);
-    const s=generateScenario(difficulty,perspective);
-    setScenario(s);
+    const s=getNextScenario(stats.history);
+    if(s)setScenario(s);
+    else{setPhase("summary");return;} // ran out of historical pitches
     setUserAction(null);
     setPreviewTimeLeft(previewDuration*1000);
     previewStartRef.current=Date.now();
     setPhase("preview");
-  },[cardIndex,difficulty,perspective,previewDuration,challengesLeft]);
+  },[cardIndex,difficulty,perspective,previewDuration,challengesLeft,getNextScenario,stats.history,trainingSource]);
 
   // Preview timer
   useEffect(()=>{
@@ -990,6 +1509,7 @@ function TrainingMode(){
   const mutedLabel={fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5};
   const green="#16a34a",red="#dc2626",blue="#2563eb",amber="#d97706";
   const noChallenges=challengesLeft!==null&&challengesLeft<=0;
+  const totalCards=trainingSource==="custom"?customPitches.length:trainingSource!=="random"?(HISTORICAL_GAMES.find(g=>g.id===trainingSource)?.pitches.length||10):10;
   const challengeBadge=challengesLeft!==null?(
     <span style={{fontSize:11,color:challengesLeft<=0?red:challengesLeft===1?amber:"#374151",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>
       {challengesLeft<=0?"No challenges":"🏳 "+challengesLeft+" left"}
@@ -1013,9 +1533,75 @@ function TrainingMode(){
             <button onClick={()=>setDifficulty(3)} style={seg(difficulty===3)}>Level 3</button>
           </div>
           <div style={{fontSize:11,color:"#6b7280",marginTop:8,lineHeight:1.5}}>
-            {difficulty===1&&"Obvious calls — extreme game states where the answer is almost always challenge or always accept. Learn the poles."}
-            {difficulty===2&&"Intermediate — mid-range thresholds (25-65%) where the math starts to matter. The shadow zone."}
-            {difficulty===3&&"Edge cases — fully random game states and borderline pitch locations. Real decision pressure."}
+            {trainingSource==="random"&&difficulty===1&&"Obvious calls — extreme game states where the answer is almost always challenge or always accept. Learn the poles."}
+            {trainingSource==="random"&&difficulty===2&&"Intermediate — mid-range thresholds (25-65%) where the math starts to matter. The shadow zone."}
+            {trainingSource==="random"&&difficulty===3&&"Edge cases — fully random game states and borderline pitch locations. Adapts if you're too accurate."}
+            {trainingSource!=="random"&&"Difficulty doesn't apply to historical or custom games — you're training on real pitch locations."}
+          </div>
+          <div style={{marginTop:16}}>
+            <div style={mutedLabel}>Scenarios</div>
+            <div style={{display:"flex",gap:2,background:"#f3f4f6",borderRadius:8,padding:2,marginTop:6,marginBottom:2}}>
+              <button onClick={()=>setTrainingSource("random")} style={seg(trainingSource==="random")}>Random</button>
+              <button onClick={()=>setTrainingSource(HISTORICAL_GAMES[0]?.id||"random")} style={seg(trainingSource!=="random"&&trainingSource!=="custom")}>Historical</button>
+              <button onClick={()=>setTrainingSource("custom")} style={seg(trainingSource==="custom")}>Custom CSV</button>
+            </div>
+            {trainingSource==="custom"&&(
+              <div style={{marginTop:8}}>
+                <div
+                  onDragOver={e=>{e.preventDefault();setCustomDragOver(true);}}
+                  onDragLeave={()=>setCustomDragOver(false)}
+                  onDrop={e=>{e.preventDefault();setCustomDragOver(false);const f=e.dataTransfer.files[0];if(f)handleCustomCSV(f);}}
+                  onClick={()=>customFileRef.current?.click()}
+                  style={{
+                    border:`2px dashed ${customDragOver?"#111827":"#d1d5db"}`,borderRadius:10,padding:"20px 12px",textAlign:"center",
+                    cursor:"pointer",background:customDragOver?"#f9fafb":"#fff",transition:"all .15s",
+                  }}
+                >
+                  <input ref={customFileRef} type="file" accept=".csv,.tsv" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)handleCustomCSV(f);e.target.value="";}}/>
+                  <div style={{fontSize:20,marginBottom:4}}>📄</div>
+                  <div style={{fontSize:12,fontWeight:600,color:"#374151"}}>
+                    {customFileName||"Drop a CSV or click to upload"}
+                  </div>
+                  <div style={{fontSize:10,color:"#9ca3af",marginTop:4,lineHeight:1.5}}>
+                    Upload a Baseball Savant CSV — search.csv from any game or player page.
+                    Auto-filters to close calls and high-leverage situations. Also supports Trackman V3 if game state columns are present.
+                  </div>
+                </div>
+                {customPitches.length>0&&(
+                  <div style={{fontSize:11,color:green,fontWeight:600,marginTop:6}}>
+                    ✓ {customPitches.length} training pitches from {customPitchesTotal} called
+                    <span style={{fontWeight:400,color:"#6b7280"}}> · filtered to close calls and high leverage</span>
+                  </div>
+                )}
+                {customFileName&&customPitchesTotal>0&&customPitches.length===0&&(
+                  <div style={{fontSize:11,color:amber,fontWeight:600,marginTop:6}}>
+                    {customPitchesTotal} called pitches found but none were borderline or high-leverage enough for training.
+                  </div>
+                )}
+                {customFileName&&customPitchesTotal===0&&(
+                  <div style={{fontSize:11,color:red,fontWeight:600,marginTop:6}}>
+                    No valid called pitches found. Needs Savant CSV with plate_x, plate_z, and ball/strike calls.
+                  </div>
+                )}
+              </div>
+            )}
+            {trainingSource!=="random"&&trainingSource!=="custom"&&(
+              <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
+                {HISTORICAL_GAMES.map(g=>(
+                  <button key={g.id} onClick={()=>setTrainingSource(g.id)} style={{
+                    textAlign:"left",padding:"8px 10px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",transition:"all .12s",
+                    border:trainingSource===g.id?"1.5px solid #111827":"1.5px solid #e5e7eb",
+                    background:trainingSource===g.id?"#f9fafb":"#fff",
+                  }}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:12,fontWeight:600,color:"#111827"}}>{g.title}</span>
+                      <span style={{fontSize:9,fontWeight:600,color:"#6b7280",background:"#f3f4f6",padding:"1px 6px",borderRadius:4}}>{g.tag}</span>
+                    </div>
+                    <div style={{fontSize:10,color:"#9ca3af",marginTop:2}}>{g.sub} · {g.pitches.length} pitches</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{marginTop:16}}>
             <div style={mutedLabel}>Challenges</div>
@@ -1041,10 +1627,23 @@ function TrainingMode(){
             </div>
           </div>
         </div>
-        <button onClick={startRound} style={{width:"100%",padding:"14px 0",borderRadius:10,border:"none",background:"#111827",color:"#fff",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+        <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#111827",marginBottom:8}}>Two inputs, one decision</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 180px",background:"#f9fafb",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#374151",marginBottom:3}}>Break-even <span style={{fontWeight:400,color:"#9ca3af"}}>— game state</span></div>
+              <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5}}>How confident you <b>need</b> to be. High-leverage lowers the bar, low-leverage raises it.</div>
+            </div>
+            <div style={{flex:"1 1 180px",background:"#f9fafb",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#374151",marginBottom:3}}>Zone confidence <span style={{fontWeight:400,color:"#9ca3af"}}>— pitch location</span></div>
+              <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5}}>How confident you <b>should</b> be. How far the pitch was from the zone edge. Challenge when conf ≥ break-even.</div>
+            </div>
+          </div>
+        </div>
+        <button onClick={startRound} disabled={trainingSource==="custom"&&customPitches.length===0} style={{width:"100%",padding:"14px 0",borderRadius:10,border:"none",background:trainingSource==="custom"&&customPitches.length===0?"#e5e7eb":"#111827",color:trainingSource==="custom"&&customPitches.length===0?"#9ca3af":"#fff",fontSize:15,fontWeight:600,cursor:trainingSource==="custom"&&customPitches.length===0?"not-allowed":"pointer",fontFamily:"inherit"}}>
           Start Round
         </button>
-        <div style={{textAlign:"center",fontSize:11,color:"#9ca3af",marginTop:8}}>10 scenarios · 2 seconds each</div>
+        <div style={{textAlign:"center",fontSize:11,color:"#9ca3af",marginTop:8}}>{trainingSource==="random"?"10 unique scenarios":trainingSource==="custom"?`${customPitches.length} pitches`:"Real pitches"} · 2 seconds each</div>
       </div>
     );
   }
@@ -1058,7 +1657,7 @@ function TrainingMode(){
           <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
           {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
           {challengeBadge}
-          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of {totalCards}</span>
         </div>
         <div style={cardStyle}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:24,marginBottom:16,marginTop:8}}>
@@ -1090,7 +1689,7 @@ function TrainingMode(){
           <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
           {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
           {challengeBadge}
-          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of {totalCards}</span>
         </div>
         <div style={cardStyle}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:12}}>
@@ -1117,7 +1716,7 @@ function TrainingMode(){
           <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
           {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
           {challengeBadge}
-          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of {totalCards}</span>
         </div>
         <div style={cardStyle}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:12}}>
@@ -1149,7 +1748,7 @@ function TrainingMode(){
           <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
           {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
           {challengeBadge}
-          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of {totalCards}</span>
         </div>
         <div style={cardStyle}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:12}}>
@@ -1161,6 +1760,11 @@ function TrainingMode(){
             <Diamond bs={scenario.bases} size={36}/>
           </div>
           <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+          {scenario.batter&&<div style={{textAlign:"center",fontSize:10,color:"#9ca3af",marginTop:4,lineHeight:1.5}}>
+            <span style={{fontWeight:600,color:"#6b7280"}}>{scenario.batter}</span> vs <span style={{fontWeight:600,color:"#6b7280"}}>{scenario.pitcher}</span>
+            {scenario.type&&<span> · {scenario.type}</span>}{scenario.speed&&<span> {scenario.speed}</span>}
+            {scenario.inn&&<span> · Inn {scenario.inn}</span>}
+          </div>}
           <div style={{textAlign:"center",fontSize:13,fontWeight:600,color:"#374151",margin:"10px 0 8px"}}>
             {perspective==="batter"?"Called strike. Challenge?":"Called ball. Challenge?"}
           </div>
@@ -1188,58 +1792,108 @@ function TrainingMode(){
   // ---- REVEAL / TIMEOUT ----
   if((phase==="reveal"||phase==="timeout")&&scenario){
     const lastEntry=stats.history[stats.history.length-1];
-    const isCorrect=lastEntry?.correct;
+    const verdict=lastEntry?.verdict||getVerdict(lastEntry?.userAction||"accept",scenario);
     const isTimeout=phase==="timeout";
     const elapsed=lastEntry?.elapsed||2000;
     const effective=lastEntry?.userAction||"accept";
-    const bannerBg=isCorrect?green:isTimeout&&!isCorrect?amber:red;
-    const bannerText=isCorrect?"✓ Correct":isTimeout?"⏱ Time's up":"✗ Incorrect";
     const transLabel=scenario.transition.terminal?(scenario.transition.to==="BB"?"→ Walk":"→ Strikeout"):(`${scenario.transition.from} → ${scenario.transition.to}`);
-    let explanation="";
-    if(scenario.thresh>=65&&scenario.correctAction==="accept") explanation=`Threshold ${scenario.thresh}% — this pitch isn't worth challenging for ${Math.abs(scenario.deltaRE).toFixed(3)} runs.`;
-    else if(scenario.thresh<=35&&scenario.correctAction==="challenge") explanation=`Threshold only ${scenario.thresh}% — big leverage, challenge on any read.`;
-    else explanation=`Threshold ${scenario.thresh}%, your confidence was ${scenario.zoneConf}% — ${scenario.zoneConf>=scenario.thresh?"above":"below"} the bar.`;
+    const intuition=getBreakevenIntuition(scenario,perspective);
+    const bothTrans=getBothTransitions(scenario);
+    const batterTrans=bothTrans.find(t=>t.type==="s2b");
+    const catcherTrans=bothTrans.find(t=>t.type==="b2s");
+    const bSwing=batterTrans?batterTrans.batterSwing:0;
+    const cSwing=catcherTrans?catcherTrans.catcherSwing:0;
+    const swingTotal=bSwing+cSwing;
+    const bPct=swingTotal===0?50:(bSwing/swingTotal)*100;
+    const reImpact=lastEntry?.reImpact||0;
 
     const gameOver=challengesLeft!==null&&challengesLeft<=0;
     return(
       <div style={{maxWidth:480,margin:"0 auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
           <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex+1} correct</span>
+          {/* RE ledger */}
+          <span style={{fontSize:11,fontWeight:600,color:stats.reLedger>=0?green:red,fontVariantNumeric:"tabular-nums"}}>
+            RE: {stats.reLedger.toFixed(3)}
+          </span>
           {challengeBadge}
-          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of {totalCards}</span>
         </div>
         <div style={cardStyle}>
-          <div style={{background:bannerBg,color:"#fff",textAlign:"center",padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:700,marginBottom:12}}>{bannerText}</div>
+          {/* Verdict banner */}
+          <div style={{background:verdict.bg,border:`1.5px solid ${verdict.border}`,textAlign:"center",padding:"10px 12px",borderRadius:8,marginBottom:12}}>
+            <div style={{fontSize:18,fontWeight:700,color:verdict.color}}>{verdict.emoji} {verdict.label}{isTimeout?" (timed out)":""}</div>
+            <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5,marginTop:4}}>{verdict.desc}</div>
+            {reImpact!==0&&<div style={{fontSize:10,fontWeight:600,color:red,marginTop:4,fontVariantNumeric:"tabular-nums"}}>
+              {reImpact.toFixed(3)} RE vs optimal
+            </div>}
+          </div>
           <div style={{display:"flex",gap:8,marginBottom:12}}>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
               <div style={mutedLabel}>You</div>
               <div style={{fontSize:13,fontWeight:700,color:effective==="challenge"?blue:"#374151",marginTop:4}}>{effective.toUpperCase()}</div>
             </div>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
-              <div style={mutedLabel}>Correct</div>
+              <div style={mutedLabel}>RE-Optimal</div>
               <div style={{fontSize:13,fontWeight:700,color:scenario.correctAction==="challenge"?blue:"#374151",marginTop:4}}>{scenario.correctAction.toUpperCase()}</div>
             </div>
           </div>
           <div style={{display:"flex",gap:6,marginBottom:12}}>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
               <div style={mutedLabel}>Zone Conf</div>
-              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.zoneConf}%</div>
+              <div style={{fontSize:14,fontWeight:700,color:scenario.zoneConf>=ZONE_OBVIOUS_THRESH?green:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.zoneConf}%</div>
+              {scenario.zoneConf>=ZONE_OBVIOUS_THRESH&&<div style={{fontSize:8,color:green,fontWeight:600,marginTop:1}}>CLEARLY WRONG</div>}
             </div>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
-              <div style={mutedLabel}>Threshold</div>
-              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.thresh}%</div>
+              <div style={mutedLabel}>Break-even</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.breakeven}%</div>
+              <div style={{fontSize:8,color:"#c4c8cd",marginTop:1}}>Tango: {scenario.thresh}%</div>
             </div>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
-              <div style={mutedLabel}>ΔRE</div>
-              <div style={{fontSize:14,fontWeight:700,color:scenario.deltaRE>0?green:scenario.deltaRE<0?red:"#6b7280",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.deltaRE>0?"+":""}{scenario.deltaRE.toFixed(3)}</div>
+              <div style={mutedLabel}>Run Swing</div>
+              <div style={{fontSize:14,fontWeight:700,color:scenario.pD>0?green:scenario.pD<0?red:"#6b7280",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.pD>0?"+":""}{scenario.pD.toFixed(3)}</div>
             </div>
           </div>
+
+          {/* Tug of war — both sides of the overturn */}
+          {batterTrans&&catcherTrans&&(
+            <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+              <div style={{display:"flex",gap:0,alignItems:"stretch",marginBottom:4}}>
+                <div style={{flex:1,textAlign:"center",padding:"3px 6px"}}>
+                  <div style={{fontSize:7,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Overturn strike</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#111827",marginTop:1}}>{batterTrans.from} → {batterTrans.terminal?batterTrans.to==="BB"?"Walk":"K":batterTrans.to}</div>
+                  <div style={{fontSize:9,color:"#6b7280"}}>{bSwing.toFixed(3)} runs</div>
+                </div>
+                <div style={{flex:1,textAlign:"center",padding:"3px 6px"}}>
+                  <div style={{fontSize:7,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Overturn ball</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#111827",marginTop:1}}>{catcherTrans.from} → {catcherTrans.terminal?catcherTrans.to==="K"?"K":"Walk":catcherTrans.to}</div>
+                  <div style={{fontSize:9,color:"#6b7280"}}>{cSwing.toFixed(3)} runs</div>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <div style={{fontSize:8,fontWeight:600,color:bPct>=50?"#374151":"#c4c8cd",width:14,textAlign:"center"}}>AB</div>
+                <div style={{flex:1,height:5,borderRadius:3,background:"#e5e7eb",overflow:"hidden",display:"flex"}}>
+                  <div style={{width:`${bPct}%`,background:bPct>=50?"#374151":"#c4c8cd",borderRadius:bPct>95?3:"3px 0 0 3px",transition:"width .3s ease"}}/>
+                  <div style={{width:`${100-bPct}%`,background:bPct<50?"#374151":"#c4c8cd",borderRadius:bPct<5?3:"0 3px 3px 0",transition:"width .3s ease"}}/>
+                </div>
+                <div style={{fontSize:8,fontWeight:600,color:bPct<50?"#374151":"#c4c8cd",width:10,textAlign:"center"}}>P</div>
+              </div>
+            </div>
+          )}
+
+          {/* Breakeven intuition */}
+          <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5,marginBottom:8,fontStyle:"italic"}}>{intuition}</div>
+
           {scenario.transition.terminal&&<div style={{textAlign:"center",fontSize:12,fontWeight:600,color:scenario.transition.to==="BB"?green:red,marginBottom:8}}>{transLabel}</div>}
-          <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5,marginBottom:8}}>{explanation}</div>
+          {scenario.note&&<div style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:6,padding:"6px 10px",marginBottom:8,fontSize:11,color:"#374151",lineHeight:1.5}}>
+            {scenario.batter&&<span style={{fontWeight:600}}>{scenario.batter} vs {scenario.pitcher}</span>}
+            {scenario.batter&&<span> · </span>}{scenario.note}
+          </div>}
+          {scenario.adapted&&<div style={{fontSize:9,color:amber,fontWeight:600,marginBottom:4}}>⚡ Adaptive — pitches within a tenth of an inch</div>}
           <div style={{fontSize:10,color:"#9ca3af",fontVariantNumeric:"tabular-nums"}}>Decided in {(elapsed/1000).toFixed(1)}s{isTimeout?" (timed out)":""}</div>
         </div>
         <button onClick={advance} style={{width:"100%",padding:"12px 0",borderRadius:10,border:"none",background:"#111827",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-          {cardIndex>=9||gameOver?"See Results":"Next →"}
+          {cardIndex>=totalCards-1||gameOver?"See Results":"Next →"}
         </button>
         {gameOver&&cardIndex<9&&<div style={{textAlign:"center",fontSize:11,color:red,fontWeight:600,marginTop:6}}>Out of challenges — round over</div>}
         <div style={{textAlign:"center",fontSize:9,color:"#c4c8cd",marginTop:4}}>Space / Enter</div>
@@ -1252,17 +1906,104 @@ function TrainingMode(){
     const total=stats.correct+stats.incorrect;
     const pct=total>0?Math.round(stats.correct/total*100):0;
     const avgTime=total>0?(stats.totalTime/total/1000).toFixed(1):"—";
-    const mistakes=stats.history.filter(h=>!h.correct);
-    const wasEliminated=challengesLeft!==null&&challengesLeft<=0&&total<10;
-    const challengesUsed=challengeMode!=="unlimited"?stats.history.filter(h=>h.userAction==="challenge"&&!h.correct).length:0;
+    const wasEliminated=challengesLeft!==null&&challengesLeft<=0&&total<totalCards;
+    const challengesUsed=challengeMode!=="unlimited"?stats.history.filter(h=>h.userAction==="challenge"&&h.verdict?.tier!=="perfect").length:0;
+
+    // Verdict breakdown counts
+    const verdictCounts={};
+    stats.history.forEach(h=>{const t=h.verdict?.tier||"unknown";verdictCounts[t]=(verdictCounts[t]||0)+1;});
+    const perfects=verdictCounts.perfect||0;
+    const smartCostly=verdictCounts.smart_costly||0;
+    const missed=verdictCounts.missed||0;
+    const badChallenge=verdictCounts.bad_challenge||0;
+    const toughHold=verdictCounts.tough_hold||0;
+    const disciplined=verdictCounts.disciplined||0;
+
+    // Challenge budget story
+    let budgetStory=null;
+    if(challengeMode!=="unlimited"){
+      const wastedChallenges=stats.history.map((h,i)=>({...h,cardNum:i+1})).filter(h=>h.userAction==="challenge"&&(h.verdict?.tier==="smart_costly"||h.verdict?.tier==="bad_challenge"));
+      const missedOpportunities=stats.history.map((h,i)=>({...h,cardNum:i+1})).filter(h=>h.verdict?.tier==="missed");
+      const worstWaste=wastedChallenges.sort((a,b)=>Math.abs(a.pD)-Math.abs(b.pD))[0];
+      const biggestMiss=missedOpportunities.sort((a,b)=>Math.abs(b.pD)-Math.abs(a.pD))[0];
+      if(worstWaste&&biggestMiss){
+        const basesDesc=(bs)=>BASES_LIST.find(b=>b.key===bs)?.desc||"";
+        budgetStory={
+          waste:worstWaste,
+          miss:biggestMiss,
+          text:`You burned a challenge on Card ${worstWaste.cardNum} — ${worstWaste.count}, ${basesDesc(worstWaste.bases)}, ${worstWaste.outs} out — a ${Math.abs(worstWaste.pD).toFixed(3)} run swing (break-even ${worstWaste.breakeven}%). Then Card ${biggestMiss.cardNum} came up: ${biggestMiss.count}, ${basesDesc(biggestMiss.bases)}, ${biggestMiss.outs} out — a ${Math.abs(biggestMiss.pD).toFixed(3)} run swing (break-even only ${biggestMiss.breakeven}%) that you couldn't challenge.`,
+        };
+      }
+    }
+
+    // Non-perfect entries for review
+    const reviewCards=stats.history.map((h,i)=>({...h,cardNum:i+1})).filter(h=>h.verdict?.tier!=="perfect");
+
     return(
       <div style={{maxWidth:480,margin:"0 auto"}}>
         <div style={cardStyle}>
           <div style={{textAlign:"center",marginBottom:16}}>
-            <div style={{fontSize:48,fontWeight:700,color:"#111827",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{total}</div>
-            <div style={{fontSize:14,color:"#6b7280"}}>{pct}% accuracy{wasEliminated?" · Eliminated":total>=10?" · Complete":""}</div>
+            <div style={{fontSize:48,fontWeight:700,color:"#111827",fontVariantNumeric:"tabular-nums"}}>{perfects}/{total}</div>
+            <div style={{fontSize:14,color:"#6b7280"}}>{pct}% perfect{wasEliminated?" · Eliminated":total>=totalCards?" · Complete":""}</div>
             {wasEliminated&&<div style={{fontSize:11,color:red,fontWeight:600,marginTop:4}}>Ran out of challenges after {total} card{total!==1?"s":""}</div>}
+            {/* RE ledger total */}
+            <div style={{fontSize:16,fontWeight:700,color:stats.reLedger>=0?green:stats.reLedger<-0.001?red:"#6b7280",marginTop:8,fontVariantNumeric:"tabular-nums"}}>
+              {stats.reLedger>=0?"+":""}{stats.reLedger.toFixed(3)} RE
+            </div>
+            <div style={{fontSize:10,color:"#9ca3af"}}>RE lost to suboptimal decisions · 0.000 is perfect</div>
           </div>
+
+          {/* Replay reel — mini zones for all pitches */}
+          <div style={{...mutedLabel,marginBottom:6}}>Replay</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:16,justifyContent:"center"}}>
+            {stats.history.map((h,i)=>{
+              const v=h.verdict||{};
+              return(
+                <div key={i} style={{textAlign:"center",width:52}}>
+                  <div style={{border:`1.5px solid ${v.border||"#e5e7eb"}`,borderRadius:6,padding:2,background:v.bg||"#fff"}}>
+                    <MiniZone pitchX={h.pitchX} pitchZ={h.pitchZ} verdictColor={v.color||"#9ca3af"} size={44}/>
+                  </div>
+                  <div style={{fontSize:10,marginTop:2}}>{v.emoji||"•"}</div>
+                  <div style={{fontSize:8,color:"#9ca3af",fontVariantNumeric:"tabular-nums"}}>{h.zoneConf}%</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Verdict breakdown */}
+          <div style={{display:"flex",gap:4,marginBottom:16,flexWrap:"wrap"}}>
+            {perfects>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>🎯</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#16a34a"}}>{perfects}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Perfect</div>
+            </div>}
+            {smartCostly>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>👁</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#d97706"}}>{smartCostly}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Smart costly</div>
+            </div>}
+            {disciplined>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>🧊</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#2563eb"}}>{disciplined}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Disciplined</div>
+            </div>}
+            {toughHold>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>🤏</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#d97706"}}>{toughHold}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Tough hold</div>
+            </div>}
+            {missed>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>⚠</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#dc2626"}}>{missed}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Missed</div>
+            </div>}
+            {badChallenge>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>✗</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#dc2626"}}>{badChallenge}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Bad chall.</div>
+            </div>}
+          </div>
+
           <div style={{display:"flex",gap:6,marginBottom:16}}>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
               <div style={mutedLabel}>Avg Time</div>
@@ -1281,19 +2022,34 @@ function TrainingMode(){
               <div style={{fontSize:14,fontWeight:700,color:challengesUsed>0?red:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{challengesUsed}</div>
             </div>}
           </div>
-          {mistakes.length>0&&(<>
-            <div style={{...mutedLabel,marginBottom:8}}>Mistakes</div>
-            {mistakes.map((m,i)=>{
-              const[mb,ms]=m.count.split("-").map(Number);
+
+          {/* Challenge budget story */}
+          {budgetStory&&(
+            <div style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"10px 12px",marginBottom:16}}>
+              <div style={{fontSize:9,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Challenge Budget</div>
+              <div style={{fontSize:11,color:"#374151",lineHeight:1.6}}>{budgetStory.text}</div>
+            </div>
+          )}
+
+          {/* Review cards — non-perfect decisions */}
+          {reviewCards.length>0&&(<>
+            <div style={{...mutedLabel,marginBottom:8}}>Review</div>
+            {reviewCards.map((m,i)=>{
+              const v=m.verdict||{};
               return(
-                <div key={i} style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:"8px 10px",marginBottom:6,fontSize:11,color:"#374151",lineHeight:1.5}}>
+                <div key={i} style={{background:v.bg||"#f9fafb",border:`1px solid ${v.border||"#e5e7eb"}`,borderRadius:8,padding:"8px 10px",marginBottom:6,fontSize:11,color:"#374151",lineHeight:1.5}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                    <span style={{fontSize:13}}>{v.emoji||"•"}</span>
+                    <span style={{fontWeight:700,color:v.color||"#374151"}}>{v.label||"—"}</span>
+                    <span style={{color:"#9ca3af",fontSize:10}}>Card {m.cardNum}</span>
+                    <span style={{marginLeft:"auto",color:"#9ca3af",fontVariantNumeric:"tabular-nums",fontSize:10}}>{(m.elapsed/1000).toFixed(1)}s{m.isTimeout?" ⏱":""}</span>
+                  </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
                     <Dots count={m.count} sm/>
                     <span>{m.outs} out{m.outs!==1?"s":""}</span>
                     <Diamond bs={m.bases} size={24}/>
-                    <span style={{marginLeft:"auto",color:"#9ca3af",fontVariantNumeric:"tabular-nums"}}>{(m.elapsed/1000).toFixed(1)}s{m.isTimeout?" ⏱":""}</span>
                   </div>
-                  <span>You: <b>{m.userAction}</b> · Correct: <b>{m.correctAction}</b> · Conf {m.zoneConf}% vs Thresh {m.thresh}%</span>
+                  <span>You: <b>{m.userAction}</b> · RE-optimal: <b>{m.correctAction}</b> · Conf {m.zoneConf}% vs BE {m.breakeven}%</span>
                 </div>
               );
             })}
@@ -2182,6 +2938,21 @@ export default function App(){
                   {isLive&&trackmanActive?"Analyze a pitch to see challenge data.":isLive&&!liveState?"Select a live game and wait for data.":"No valid challenge transitions for this count."}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Decision framework explainer */}
+          <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"16px 20px",marginTop:12}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#111827",marginBottom:10}}>Two inputs, one decision</div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:"1 1 200px",background:"#f9fafb",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#374151",marginBottom:4}}>Break-even <span style={{fontWeight:400,color:"#9ca3af"}}>— from game state</span></div>
+                <div style={{fontSize:12,color:"#6b7280",lineHeight:1.6}}>How confident you <b>need</b> to be. Computed from the run swing of overturning this call: <span style={{fontFamily:"'SF Mono',Menlo,monospace",fontSize:11}}>cost ÷ (swing + cost)</span>. High-leverage spots lower the bar. Low-leverage spots raise it.</div>
+              </div>
+              <div style={{flex:"1 1 200px",background:"#f9fafb",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#374151",marginBottom:4}}>Zone confidence <span style={{fontWeight:400,color:"#9ca3af"}}>— from pitch location</span></div>
+                <div style={{fontSize:12,color:"#6b7280",lineHeight:1.6}}>How confident you <b>should</b> be. Estimated from Statcast coordinates — how far the pitch was from the zone edge, adjusted for tracking error. Challenge when confidence ≥ break-even.</div>
+              </div>
             </div>
           </div>
         </>)}
