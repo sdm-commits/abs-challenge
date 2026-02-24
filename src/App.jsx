@@ -955,6 +955,7 @@ function getVerdict(userAction, scenario) {
   const { correctAction, zoneConf, breakeven } = scenario;
   const zoneObvious = zoneConf >= ZONE_OBVIOUS_THRESH; // the call is clearly wrong
   const reChallenge = correctAction === "challenge"; // break-even math says challenge
+  const callLikelyWrong = zoneConf > 50; // more likely than not the call was wrong
 
   if (userAction === "challenge") {
     if (reChallenge) {
@@ -965,8 +966,12 @@ function getVerdict(userAction, scenario) {
       return { tier: "smart_costly", label: "Smart but costly", emoji: "👁", color: "#d97706", bg: "#fffbeb", border: "#fde68a",
         desc: `Good eye — the call was wrong (${zoneConf}% conf), but break-even was ${breakeven}% here. The run swing didn't justify it. Save this challenge for a bigger moment.` };
     }
+    if (callLikelyWrong) {
+      return { tier: "lucky_challenge", label: "Overturned, but risky", emoji: "🍀", color: "#d97706", bg: "#fffbeb", border: "#fde68a",
+        desc: `The call was probably wrong (${zoneConf}% conf), so this gets overturned. But break-even was ${breakeven}% — at this confidence, you're gambling. Over a season, this costs more challenges than it saves.` };
+    }
     return { tier: "bad_challenge", label: "Bad challenge", emoji: "✗", color: "#dc2626", bg: "#fef2f2", border: "#fecaca",
-      desc: `The call wasn't clearly wrong (${zoneConf}% conf) and break-even was ${breakeven}%. Wasted challenge.` };
+      desc: `The call was probably right (${zoneConf}% conf) and break-even was ${breakeven}%. Burned a challenge on a pitch that likely stands.` };
   }
 
   // userAction === "accept"
@@ -1916,13 +1921,14 @@ function TrainingMode(){
     const smartCostly=verdictCounts.smart_costly||0;
     const missed=verdictCounts.missed||0;
     const badChallenge=verdictCounts.bad_challenge||0;
+    const luckyChallenge=verdictCounts.lucky_challenge||0;
     const toughHold=verdictCounts.tough_hold||0;
     const disciplined=verdictCounts.disciplined||0;
 
     // Challenge budget story
     let budgetStory=null;
     if(challengeMode!=="unlimited"){
-      const wastedChallenges=stats.history.map((h,i)=>({...h,cardNum:i+1})).filter(h=>h.userAction==="challenge"&&(h.verdict?.tier==="smart_costly"||h.verdict?.tier==="bad_challenge"));
+      const wastedChallenges=stats.history.map((h,i)=>({...h,cardNum:i+1})).filter(h=>h.userAction==="challenge"&&(h.verdict?.tier==="smart_costly"||h.verdict?.tier==="bad_challenge"||h.verdict?.tier==="lucky_challenge"));
       const missedOpportunities=stats.history.map((h,i)=>({...h,cardNum:i+1})).filter(h=>h.verdict?.tier==="missed");
       const worstWaste=wastedChallenges.sort((a,b)=>Math.abs(a.pD)-Math.abs(b.pD))[0];
       const biggestMiss=missedOpportunities.sort((a,b)=>Math.abs(b.pD)-Math.abs(a.pD))[0];
@@ -1981,6 +1987,11 @@ function TrainingMode(){
               <div style={{fontSize:16}}>👁</div>
               <div style={{fontSize:16,fontWeight:700,color:"#d97706"}}>{smartCostly}</div>
               <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Smart costly</div>
+            </div>}
+            {luckyChallenge>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#fffbeb",border:"1px solid #fde68a",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+              <div style={{fontSize:16}}>🍀</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#d97706"}}>{luckyChallenge}</div>
+              <div style={{fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase"}}>Lucky</div>
             </div>}
             {disciplined>0&&<div style={{flex:"1 1 0",minWidth:60,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
               <div style={{fontSize:16}}>🧊</div>
