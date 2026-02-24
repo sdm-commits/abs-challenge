@@ -75,6 +75,128 @@ const getTangoThresh=(bases,outs,balls,strikes)=>TANGO[bases]?.[outs]?.[strikes]
 const getTier=(thresh)=>thresh<=25?{label:"Challenge",sub:"Even a hunch is enough",color:"#2563eb",bg:"#f9fafb",border:"#bfdbfe"}:thresh<=45?{label:"Lean challenge",sub:"Worth it if it looked wrong",color:"#16a34a",bg:"#f9fafb",border:"#bbf7d0"}:thresh<=65?{label:"Toss-up",sub:"Only if you saw it clearly",color:"#d97706",bg:"#fffbeb",border:"#fde68a"}:thresh<=80?{label:"Lean hold",sub:"Need to be pretty sure",color:"#ea580c",bg:"#fff7ed",border:"#fed7aa"}:{label:"Hold",sub:"Only challenge if certain",color:"#dc2626",bg:"#fef2f2",border:"#fecaca"};
 
 // ============================================================
+// ZONE MODEL — pitch location to zone confidence (Training Mode)
+// ============================================================
+const ZONE_LEFT = -17/2/12;    // -0.7083 ft
+const ZONE_RIGHT = 17/2/12;    // +0.7083 ft
+const ZONE_TOP = 3.5;          // ft (default sz_top)
+const ZONE_BOT = 1.6;          // ft (default sz_bot)
+const BALL_R = 2.9/2/12;       // ball radius in feet
+const EFF_LEFT = ZONE_LEFT - BALL_R;
+const EFF_RIGHT = ZONE_RIGHT + BALL_R;
+const EFF_TOP = ZONE_TOP + BALL_R;
+const EFF_BOT = ZONE_BOT - BALL_R;
+const SIGMA = 1.0 / 12;        // 1 inch in feet
+
+function gaussianCdf(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.8212560 + t * 1.3302744))));
+  return x > 0 ? 1 - p : p;
+}
+
+function getZoneConfidence(px, pz) {
+  const isOutside = px < EFF_LEFT || px > EFF_RIGHT || pz < EFF_BOT || pz > EFF_TOP;
+  if (isOutside) {
+    const dx = Math.max(EFF_LEFT - px, px - EFF_RIGHT, 0);
+    const dz = Math.max(EFF_BOT - pz, pz - EFF_TOP, 0);
+    return gaussianCdf(Math.max(dx, dz) / SIGMA);
+  }
+  const dxIn = Math.min(px - EFF_LEFT, EFF_RIGHT - px);
+  const dzIn = Math.min(pz - EFF_BOT, EFF_TOP - pz);
+  return 1 - gaussianCdf(Math.min(dxIn, dzIn) / SIGMA);
+}
+
+// ============================================================
+// TRAINING — scenario generation
+// ============================================================
+function generatePitchLocation(difficulty) {
+  const edges = [
+    { axis: "x", val: ZONE_LEFT },
+    { axis: "x", val: ZONE_RIGHT },
+    { axis: "z", val: ZONE_TOP },
+    { axis: "z", val: ZONE_BOT },
+  ];
+  const edge = edges[Math.floor(Math.random() * edges.length)];
+  const inside = Math.random() < 0.5;
+  let offset;
+  if (difficulty === 1) offset = (1.5 + Math.random() * 1.5) / 12;
+  else if (difficulty === 2) offset = (0.5 + Math.random() * 1.5) / 12;
+  else offset = (Math.random() * 1.5) / 12;
+
+  let pitchX, pitchZ;
+  if (edge.axis === "x") {
+    const sign = edge.val > 0 ? 1 : -1;
+    pitchX = edge.val + sign * (inside ? -offset : offset);
+    pitchZ = ZONE_BOT + Math.random() * (ZONE_TOP - ZONE_BOT);
+  } else {
+    const sign = edge.val > ZONE_BOT ? 1 : -1;
+    pitchZ = edge.val + sign * (inside ? -offset : offset);
+    pitchX = ZONE_LEFT + Math.random() * (ZONE_RIGHT - ZONE_LEFT);
+  }
+  return { pitchX, pitchZ };
+}
+
+const LEVEL1_POOL = [
+  { count: "3-2", bases: "111", outs: 2 },
+  { count: "3-2", bases: "101", outs: 2 },
+  { count: "3-2", bases: "110", outs: 2 },
+  { count: "3-2", bases: "111", outs: 1 },
+  { count: "0-0", bases: "000", outs: 0 },
+  { count: "0-2", bases: "000", outs: 0 },
+  { count: "0-1", bases: "000", outs: 0 },
+];
+const LEVEL2_POOL = [
+  { count: "2-2", bases: "100", outs: 1 },
+  { count: "1-2", bases: "001", outs: 1 },
+  { count: "3-2", bases: "000", outs: 1 },
+  { count: "1-1", bases: "010", outs: 0 },
+  { count: "2-1", bases: "110", outs: 1 },
+  { count: "0-2", bases: "101", outs: 2 },
+  { count: "1-2", bases: "111", outs: 0 },
+  { count: "2-2", bases: "011", outs: 1 },
+  { count: "3-1", bases: "100", outs: 0 },
+  { count: "1-1", bases: "001", outs: 2 },
+];
+
+function pickGameState(difficulty) {
+  if (difficulty === 1) return LEVEL1_POOL[Math.floor(Math.random() * LEVEL1_POOL.length)];
+  if (difficulty === 2) return LEVEL2_POOL[Math.floor(Math.random() * LEVEL2_POOL.length)];
+  const count = COUNTS[Math.floor(Math.random() * COUNTS.length)];
+  const bases = BASES_LIST[Math.floor(Math.random() * BASES_LIST.length)].key;
+  const outs = Math.floor(Math.random() * 3);
+  return { count, bases, outs };
+}
+
+function generateScenario(difficulty, perspective) {
+  const gs = pickGameState(difficulty);
+  const { pitchX, pitchZ } = generatePitchLocation(difficulty);
+  const rawConf = getZoneConfidence(pitchX, pitchZ);
+  const zoneConf = Math.max(5, Math.min(95, Math.round(rawConf * 100)));
+  const [b, s] = gs.count.split("-").map(Number);
+  const thresh = getTangoThresh(gs.bases, gs.outs, b, s);
+  const tier = getTier(thresh);
+  const trans = getTrans(gs.count, gs.outs, gs.bases);
+  const relevantType = perspective === "batter" ? "s2b" : "b2s";
+  const transition = trans.find(t => t.type === relevantType);
+  if (!transition) return generateScenario(difficulty, perspective);
+
+  const cur = RE[gs.outs]?.[gs.bases]?.[gs.count];
+  if (cur == null) return generateScenario(difficulty, perspective);
+  let cor;
+  if (transition.terminal) {
+    if (transition.newOuts >= 3) cor = 0;
+    else cor = (RE[transition.newOuts]?.[transition.newBases]?.["0-0"] ?? 0) + transition.runs;
+  } else {
+    cor = RE[gs.outs]?.[gs.bases]?.[transition.to];
+    if (cor == null) return generateScenario(difficulty, perspective);
+  }
+  const deltaRE = cor - cur;
+  const correctAction = zoneConf >= thresh ? "challenge" : "accept";
+  return { ...gs, pitchX, pitchZ, zoneConf, transition, thresh, tier, deltaRE, correctAction, cur, cor };
+}
+
+// ============================================================
 // CHALLENGE CONTEXT — tug of war + both transitions
 // ============================================================
 function ChallengeContext({analysis,activeCount,persp}){
@@ -688,9 +810,509 @@ function mapTrackmanRow(row){
 }
 
 // ============================================================
+// ZONE GRAPHIC — SVG strike zone for training mode
+// ============================================================
+function ZoneGraphic({pitchX,pitchZ}){
+  const W=200,H=240;
+  const mapX=x=>(x+1.5)/3*W;
+  const mapZ=z=>H-(z-1.0)/3.2*H;
+  const zL=mapX(ZONE_LEFT),zR=mapX(ZONE_RIGHT),zT=mapZ(ZONE_TOP),zB=mapZ(ZONE_BOT);
+  const sL=mapX(EFF_LEFT),sR=mapX(EFF_RIGHT),sT=mapZ(EFF_TOP),sB=mapZ(EFF_BOT);
+  const hasPitch=pitchX!=null&&pitchZ!=null;
+  const px=hasPitch?mapX(pitchX):0,pz=hasPitch?mapZ(pitchZ):0;
+  const plateW=17/12/3*W,plateMid=W/2,plateY=mapZ(1.0);
+  return(
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block",margin:"0 auto"}}>
+      <rect x={sL} y={sT} width={sR-sL} height={sB-sT} fill="none" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4 3"/>
+      <rect x={zL} y={zT} width={zR-zL} height={zB-zT} fill="none" stroke="#d1d5db" strokeWidth="1.5"/>
+      <polygon points={`${plateMid},${plateY} ${plateMid-plateW/2},${plateY-6} ${plateMid-plateW/2},${plateY-12} ${plateMid+plateW/2},${plateY-12} ${plateMid+plateW/2},${plateY-6}`} fill="#f3f4f6" stroke="#d1d5db" strokeWidth="1"/>
+      {hasPitch&&<circle cx={px} cy={pz} r={7} fill="#dc2626" stroke="#fff" strokeWidth={2}/>}
+    </svg>
+  );
+}
+
+// ============================================================
+// TRAINING MODE
+// ============================================================
+function TrainingMode(){
+  const[perspective,setPerspective]=useState("batter");
+  const[difficulty,setDifficulty]=useState(1);
+  const[phase,setPhase]=useState("ready");
+  const[scenario,setScenario]=useState(null);
+  const[timeLeft,setTimeLeft]=useState(2000);
+  const[userAction,setUserAction]=useState(null);
+  const[cardIndex,setCardIndex]=useState(0);
+  const[stats,setStats]=useState({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,history:[]});
+  const[challengeMode,setChallengeMode]=useState("unlimited"); // "unlimited" | "2" | "1"
+  const[challengesLeft,setChallengesLeft]=useState(null); // null = unlimited
+  const[previewDuration,setPreviewDuration]=useState(5);
+  const[previewTimeLeft,setPreviewTimeLeft]=useState(5000);
+  const startTimeRef=useRef(null);
+  const timerRef=useRef(null);
+  const previewStartRef=useRef(null);
+  const previewTimerRef=useRef(null);
+  const callTimerRef=useRef(null);
+
+  const seg=(active)=>({padding:"6px 0",flex:1,borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",textAlign:"center",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"});
+
+  const pitchTimerRef=useRef(null);
+
+  const goToPitch=useCallback(()=>{
+    clearInterval(previewTimerRef.current);
+    setPhase("pitch");
+  },[]);
+
+  const goToCall=useCallback(()=>{
+    clearTimeout(pitchTimerRef.current);
+    setPhase("call");
+  },[]);
+
+  const goToLive=useCallback(()=>{
+    clearTimeout(callTimerRef.current);
+    startTimeRef.current=Date.now();
+    setTimeLeft(2000);
+    setPhase("live");
+  },[]);
+
+  const startRound=useCallback(()=>{
+    setStats({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,history:[]});
+    setCardIndex(0);
+    setChallengesLeft(challengeMode==="unlimited"?null:Number(challengeMode));
+    const s=generateScenario(difficulty,perspective);
+    setScenario(s);
+    setUserAction(null);
+    setPreviewTimeLeft(previewDuration*1000);
+    previewStartRef.current=Date.now();
+    setPhase("preview");
+  },[difficulty,perspective,previewDuration,challengeMode]);
+
+  const handleAction=useCallback((action)=>{
+    if(phase!=="live")return;
+    // Block challenge if no challenges remaining
+    if(action==="challenge"&&challengesLeft===0){return;}
+    clearInterval(timerRef.current);
+    const elapsed=Date.now()-startTimeRef.current;
+    const isTimeout=action===null;
+    const effective=action||"accept";
+    const correct=effective===scenario.correctAction;
+    const newPhase=isTimeout?"timeout":"reveal";
+    setUserAction(effective);
+    setTimeLeft(isTimeout?0:2000-elapsed);
+    // Update challenge inventory: incorrect challenge costs one, correct challenge is free
+    if(challengesLeft!==null&&effective==="challenge"&&!correct){
+      setChallengesLeft(prev=>Math.max(0,prev-1));
+    }
+    setStats(prev=>{
+      const ns=prev.streak+(correct?1:0);
+      return{
+        correct:prev.correct+(correct?1:0),
+        incorrect:prev.incorrect+(correct?0:1),
+        timeouts:prev.timeouts+(isTimeout?1:0),
+        totalTime:prev.totalTime+Math.min(elapsed,2000),
+        streak:correct?ns:0,
+        bestStreak:Math.max(prev.bestStreak,correct?ns:prev.streak),
+        history:[...prev.history,{...scenario,userAction:effective,correct,elapsed:Math.min(elapsed,2000),isTimeout}],
+      };
+    });
+    setPhase(newPhase);
+  },[phase,scenario,challengesLeft]);
+
+  const advance=useCallback(()=>{
+    if(cardIndex>=9||(challengesLeft!==null&&challengesLeft<=0)){setPhase("summary");return;}
+    const next=cardIndex+1;
+    setCardIndex(next);
+    const s=generateScenario(difficulty,perspective);
+    setScenario(s);
+    setUserAction(null);
+    setPreviewTimeLeft(previewDuration*1000);
+    previewStartRef.current=Date.now();
+    setPhase("preview");
+  },[cardIndex,difficulty,perspective,previewDuration,challengesLeft]);
+
+  // Preview timer
+  useEffect(()=>{
+    if(phase!=="preview")return;
+    const dur=previewDuration*1000;
+    previewTimerRef.current=setInterval(()=>{
+      const elapsed=Date.now()-previewStartRef.current;
+      const remaining=Math.max(0,dur-elapsed);
+      setPreviewTimeLeft(remaining);
+      if(remaining<=0){clearInterval(previewTimerRef.current);goToPitch();}
+    },16);
+    return()=>clearInterval(previewTimerRef.current);
+  },[phase,previewDuration,goToPitch]);
+
+  // Pitch arrival timer
+  useEffect(()=>{
+    if(phase!=="pitch")return;
+    pitchTimerRef.current=setTimeout(goToCall,500);
+    return()=>clearTimeout(pitchTimerRef.current);
+  },[phase,goToCall]);
+
+  // Call announcement timer
+  useEffect(()=>{
+    if(phase!=="call")return;
+    callTimerRef.current=setTimeout(goToLive,1000);
+    return()=>clearTimeout(callTimerRef.current);
+  },[phase,goToLive]);
+
+  // Challenge timer
+  useEffect(()=>{
+    if(phase!=="live")return;
+    timerRef.current=setInterval(()=>{
+      const elapsed=Date.now()-startTimeRef.current;
+      const remaining=Math.max(0,2000-elapsed);
+      setTimeLeft(remaining);
+      if(remaining<=0){clearInterval(timerRef.current);handleAction(null);}
+    },16);
+    return()=>clearInterval(timerRef.current);
+  },[phase,handleAction]);
+
+  // Keyboard
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(phase==="preview"){
+        if(e.key===" "||e.key==="Enter"){e.preventDefault();goToPitch();}
+      }
+      if(phase==="live"){
+        if(e.key==="ArrowLeft"||e.key==="a"||e.key==="A"){e.preventDefault();handleAction("challenge");}
+        if(e.key==="ArrowRight"||e.key==="d"||e.key==="D"){e.preventDefault();handleAction("accept");}
+      }
+      if(phase==="reveal"||phase==="timeout"){
+        if(e.key===" "||e.key==="Enter"){e.preventDefault();advance();}
+      }
+    };
+    window.addEventListener("keydown",handler);
+    return()=>window.removeEventListener("keydown",handler);
+  },[phase,handleAction,advance,goToPitch]);
+
+  const cardStyle={background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:16,marginBottom:10};
+  const mutedLabel={fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5};
+  const green="#16a34a",red="#dc2626",blue="#2563eb",amber="#d97706";
+  const noChallenges=challengesLeft!==null&&challengesLeft<=0;
+  const challengeBadge=challengesLeft!==null?(
+    <span style={{fontSize:11,color:challengesLeft<=0?red:challengesLeft===1?amber:"#374151",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>
+      {challengesLeft<=0?"No challenges":"🏳 "+challengesLeft+" left"}
+    </span>
+  ):null;
+
+  // ---- READY ----
+  if(phase==="ready"){
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={cardStyle}>
+          <div style={mutedLabel}>Perspective</div>
+          <div style={{display:"flex",gap:2,background:"#f3f4f6",borderRadius:8,padding:2,marginTop:6,marginBottom:16}}>
+            <button onClick={()=>setPerspective("batter")} style={seg(perspective==="batter")}>Batter</button>
+            <button onClick={()=>setPerspective("catcher")} style={seg(perspective==="catcher")}>Catcher</button>
+          </div>
+          <div style={mutedLabel}>Difficulty</div>
+          <div style={{display:"flex",gap:2,background:"#f3f4f6",borderRadius:8,padding:2,marginTop:6}}>
+            <button onClick={()=>setDifficulty(1)} style={seg(difficulty===1)}>Level 1</button>
+            <button onClick={()=>setDifficulty(2)} style={seg(difficulty===2)}>Level 2</button>
+            <button onClick={()=>setDifficulty(3)} style={seg(difficulty===3)}>Level 3</button>
+          </div>
+          <div style={{fontSize:11,color:"#6b7280",marginTop:8,lineHeight:1.5}}>
+            {difficulty===1&&"Obvious calls — extreme game states where the answer is almost always challenge or always accept. Learn the poles."}
+            {difficulty===2&&"Intermediate — mid-range thresholds (25-65%) where the math starts to matter. The shadow zone."}
+            {difficulty===3&&"Edge cases — fully random game states and borderline pitch locations. Real decision pressure."}
+          </div>
+          <div style={{marginTop:16}}>
+            <div style={mutedLabel}>Challenges</div>
+            <div style={{display:"flex",gap:2,background:"#f3f4f6",borderRadius:8,padding:2,marginTop:6}}>
+              <button onClick={()=>setChallengeMode("unlimited")} style={seg(challengeMode==="unlimited")}>Unlimited</button>
+              <button onClick={()=>setChallengeMode("2")} style={seg(challengeMode==="2")}>2 Challenges</button>
+              <button onClick={()=>setChallengeMode("1")} style={seg(challengeMode==="1")}>1 Challenge</button>
+            </div>
+            <div style={{fontSize:11,color:"#6b7280",marginTop:6,lineHeight:1.5}}>
+              {challengeMode==="unlimited"&&"Practice mode — unlimited challenges, always see all 10 cards."}
+              {challengeMode==="2"&&"Game mode — 2 challenges like MLB. Correct challenge keeps it, incorrect loses one. Round ends when you're out."}
+              {challengeMode==="1"&&"Hard mode — 1 challenge. Miss it and you're done."}
+            </div>
+          </div>
+          <div style={{marginTop:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div style={mutedLabel}>Preview Time</div>
+              <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{previewDuration}s</span>
+            </div>
+            <input type="range" min={4} max={10} step={1} value={previewDuration} onChange={e=>setPreviewDuration(Number(e.target.value))} style={{width:"100%",marginTop:6}}/>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#c4c8cd",marginTop:2}}>
+              <span>4s</span><span>10s</span>
+            </div>
+          </div>
+        </div>
+        <button onClick={startRound} style={{width:"100%",padding:"14px 0",borderRadius:10,border:"none",background:"#111827",color:"#fff",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+          Start Round
+        </button>
+        <div style={{textAlign:"center",fontSize:11,color:"#9ca3af",marginTop:8}}>10 scenarios · 2 seconds each</div>
+      </div>
+    );
+  }
+
+  // ---- PREVIEW ----
+  if(phase==="preview"&&scenario){
+    const pvPct=previewTimeLeft/(previewDuration*1000);
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
+          {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
+          {challengeBadge}
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+        </div>
+        <div style={cardStyle}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:24,marginBottom:16,marginTop:8}}>
+            <Dots count={scenario.count}/>
+            <div style={{display:"flex",alignItems:"center",gap:3}}>
+              {[0,1,2].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<scenario.outs?"#374151":"#e5e7eb"}}/>)}
+              <span style={{fontSize:9,color:"#9ca3af",marginLeft:3}}>Outs</span>
+            </div>
+            <Diamond bs={scenario.bases} size={42}/>
+          </div>
+          <ZoneGraphic pitchX={null} pitchZ={null}/>
+          <div style={{textAlign:"center",fontSize:13,fontWeight:500,color:"#9ca3af",margin:"12px 0 8px",animation:"pulse 1.5s infinite"}}>
+            Pitch incoming…
+          </div>
+          <div style={{position:"relative",height:4,borderRadius:2,background:"#e5e7eb",overflow:"hidden"}}>
+            <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pvPct*100}%`,background:"#d1d5db",borderRadius:2,transition:"width 16ms linear"}}/>
+          </div>
+          <div style={{textAlign:"center",fontSize:9,color:"#c4c8cd",marginTop:8}}>Space to skip</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- PITCH ARRIVAL ----
+  if(phase==="pitch"&&scenario){
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
+          {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
+          {challengeBadge}
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+        </div>
+        <div style={cardStyle}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:12}}>
+            <Dots count={scenario.count}/>
+            <div style={{display:"flex",alignItems:"center",gap:3}}>
+              {[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:i<scenario.outs?"#374151":"#e5e7eb"}}/>)}
+              <span style={{fontSize:9,color:"#9ca3af",marginLeft:3}}>Outs</span>
+            </div>
+            <Diamond bs={scenario.bases} size={36}/>
+          </div>
+          <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- CALL ANNOUNCEMENT ----
+  if(phase==="call"&&scenario){
+    const callText=perspective==="batter"?"STRIKE!":"BALL!";
+    const callColor=perspective==="batter"?red:green;
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
+          {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
+          {challengeBadge}
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+        </div>
+        <div style={cardStyle}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:12}}>
+            <Dots count={scenario.count}/>
+            <div style={{display:"flex",alignItems:"center",gap:3}}>
+              {[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:i<scenario.outs?"#374151":"#e5e7eb"}}/>)}
+              <span style={{fontSize:9,color:"#9ca3af",marginLeft:3}}>Outs</span>
+            </div>
+            <Diamond bs={scenario.bases} size={36}/>
+          </div>
+          <div style={{position:"relative"}}>
+            <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+              <div style={{fontSize:40,fontWeight:900,color:callColor,textTransform:"uppercase",letterSpacing:2,textShadow:"0 2px 8px rgba(0,0,0,0.12)",animation:"pulse 0.6s ease-in-out"}}>{callText}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- LIVE ----
+  if(phase==="live"&&scenario){
+    const pct=timeLeft/2000;
+    const barColor=timeLeft>1200?green:timeLeft>600?amber:red;
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex} correct</span>
+          {stats.streak>1&&<span style={{fontSize:11,color:amber,fontWeight:600}}>🔥 {stats.streak} streak</span>}
+          {challengeBadge}
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+        </div>
+        <div style={cardStyle}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:12}}>
+            <Dots count={scenario.count}/>
+            <div style={{display:"flex",alignItems:"center",gap:3}}>
+              {[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:i<scenario.outs?"#374151":"#e5e7eb"}}/>)}
+              <span style={{fontSize:9,color:"#9ca3af",marginLeft:3}}>Outs</span>
+            </div>
+            <Diamond bs={scenario.bases} size={36}/>
+          </div>
+          <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+          <div style={{textAlign:"center",fontSize:13,fontWeight:600,color:"#374151",margin:"10px 0 8px"}}>
+            {perspective==="batter"?"Called strike. Challenge?":"Called ball. Challenge?"}
+          </div>
+          <div style={{position:"relative",height:6,borderRadius:3,background:"#e5e7eb",overflow:"hidden",marginBottom:4}}>
+            <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct*100}%`,background:barColor,borderRadius:3,transition:"width 16ms linear"}}/>
+          </div>
+          <div style={{textAlign:"right",fontSize:10,color:barColor,fontWeight:600,fontVariantNumeric:"tabular-nums",marginBottom:10}}>{(timeLeft/1000).toFixed(1)}s</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>handleAction("challenge")} disabled={noChallenges} style={{flex:1,padding:"14px 0",borderRadius:8,border:"none",background:noChallenges?"#e5e7eb":blue,color:noChallenges?"#9ca3af":"#fff",fontSize:14,fontWeight:600,cursor:noChallenges?"not-allowed":"pointer",fontFamily:"inherit",opacity:noChallenges?.5:1}}>
+              CHALLENGE
+            </button>
+            <button onClick={()=>handleAction("accept")} style={{flex:1,padding:"14px 0",borderRadius:8,border:"none",background:"#f3f4f6",color:"#374151",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              ACCEPT
+            </button>
+          </div>
+          <div style={{display:"flex",justifyContent:"center",gap:16,marginTop:6}}>
+            <span style={{fontSize:9,color:"#c4c8cd"}}>← A</span>
+            <span style={{fontSize:9,color:"#c4c8cd"}}>D →</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- REVEAL / TIMEOUT ----
+  if((phase==="reveal"||phase==="timeout")&&scenario){
+    const lastEntry=stats.history[stats.history.length-1];
+    const isCorrect=lastEntry?.correct;
+    const isTimeout=phase==="timeout";
+    const elapsed=lastEntry?.elapsed||2000;
+    const effective=lastEntry?.userAction||"accept";
+    const bannerBg=isCorrect?green:isTimeout&&!isCorrect?amber:red;
+    const bannerText=isCorrect?"✓ Correct":isTimeout?"⏱ Time's up":"✗ Incorrect";
+    const transLabel=scenario.transition.terminal?(scenario.transition.to==="BB"?"→ Walk":"→ Strikeout"):(`${scenario.transition.from} → ${scenario.transition.to}`);
+    let explanation="";
+    if(scenario.thresh>=65&&scenario.correctAction==="accept") explanation=`Threshold ${scenario.thresh}% — this pitch isn't worth challenging for ${Math.abs(scenario.deltaRE).toFixed(3)} runs.`;
+    else if(scenario.thresh<=35&&scenario.correctAction==="challenge") explanation=`Threshold only ${scenario.thresh}% — big leverage, challenge on any read.`;
+    else explanation=`Threshold ${scenario.thresh}%, your confidence was ${scenario.zoneConf}% — ${scenario.zoneConf>=scenario.thresh?"above":"below"} the bar.`;
+
+    const gameOver=challengesLeft!==null&&challengesLeft<=0;
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex+1} correct</span>
+          {challengeBadge}
+          <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of 10</span>
+        </div>
+        <div style={cardStyle}>
+          <div style={{background:bannerBg,color:"#fff",textAlign:"center",padding:"10px 0",borderRadius:8,fontSize:16,fontWeight:700,marginBottom:12}}>{bannerText}</div>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+              <div style={mutedLabel}>You</div>
+              <div style={{fontSize:13,fontWeight:700,color:effective==="challenge"?blue:"#374151",marginTop:4}}>{effective.toUpperCase()}</div>
+            </div>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+              <div style={mutedLabel}>Correct</div>
+              <div style={{fontSize:13,fontWeight:700,color:scenario.correctAction==="challenge"?blue:"#374151",marginTop:4}}>{scenario.correctAction.toUpperCase()}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>Zone Conf</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.zoneConf}%</div>
+            </div>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>Threshold</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.thresh}%</div>
+            </div>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>ΔRE</div>
+              <div style={{fontSize:14,fontWeight:700,color:scenario.deltaRE>0?green:scenario.deltaRE<0?red:"#6b7280",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.deltaRE>0?"+":""}{scenario.deltaRE.toFixed(3)}</div>
+            </div>
+          </div>
+          {scenario.transition.terminal&&<div style={{textAlign:"center",fontSize:12,fontWeight:600,color:scenario.transition.to==="BB"?green:red,marginBottom:8}}>{transLabel}</div>}
+          <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5,marginBottom:8}}>{explanation}</div>
+          <div style={{fontSize:10,color:"#9ca3af",fontVariantNumeric:"tabular-nums"}}>Decided in {(elapsed/1000).toFixed(1)}s{isTimeout?" (timed out)":""}</div>
+        </div>
+        <button onClick={advance} style={{width:"100%",padding:"12px 0",borderRadius:10,border:"none",background:"#111827",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+          {cardIndex>=9||gameOver?"See Results":"Next →"}
+        </button>
+        {gameOver&&cardIndex<9&&<div style={{textAlign:"center",fontSize:11,color:red,fontWeight:600,marginTop:6}}>Out of challenges — round over</div>}
+        <div style={{textAlign:"center",fontSize:9,color:"#c4c8cd",marginTop:4}}>Space / Enter</div>
+      </div>
+    );
+  }
+
+  // ---- SUMMARY ----
+  if(phase==="summary"){
+    const total=stats.correct+stats.incorrect;
+    const pct=total>0?Math.round(stats.correct/total*100):0;
+    const avgTime=total>0?(stats.totalTime/total/1000).toFixed(1):"—";
+    const mistakes=stats.history.filter(h=>!h.correct);
+    const wasEliminated=challengesLeft!==null&&challengesLeft<=0&&total<10;
+    const challengesUsed=challengeMode!=="unlimited"?stats.history.filter(h=>h.userAction==="challenge"&&!h.correct).length:0;
+    return(
+      <div style={{maxWidth:480,margin:"0 auto"}}>
+        <div style={cardStyle}>
+          <div style={{textAlign:"center",marginBottom:16}}>
+            <div style={{fontSize:48,fontWeight:700,color:"#111827",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{total}</div>
+            <div style={{fontSize:14,color:"#6b7280"}}>{pct}% accuracy{wasEliminated?" · Eliminated":total>=10?" · Complete":""}</div>
+            {wasEliminated&&<div style={{fontSize:11,color:red,fontWeight:600,marginTop:4}}>Ran out of challenges after {total} card{total!==1?"s":""}</div>}
+          </div>
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>Avg Time</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{avgTime}s</div>
+            </div>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>Timeouts</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{stats.timeouts}</div>
+            </div>
+            <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>Best Streak</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{stats.bestStreak}</div>
+            </div>
+            {challengeMode!=="unlimited"&&<div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+              <div style={mutedLabel}>Chall. Lost</div>
+              <div style={{fontSize:14,fontWeight:700,color:challengesUsed>0?red:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{challengesUsed}</div>
+            </div>}
+          </div>
+          {mistakes.length>0&&(<>
+            <div style={{...mutedLabel,marginBottom:8}}>Mistakes</div>
+            {mistakes.map((m,i)=>{
+              const[mb,ms]=m.count.split("-").map(Number);
+              return(
+                <div key={i} style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:"8px 10px",marginBottom:6,fontSize:11,color:"#374151",lineHeight:1.5}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                    <Dots count={m.count} sm/>
+                    <span>{m.outs} out{m.outs!==1?"s":""}</span>
+                    <Diamond bs={m.bases} size={24}/>
+                    <span style={{marginLeft:"auto",color:"#9ca3af",fontVariantNumeric:"tabular-nums"}}>{(m.elapsed/1000).toFixed(1)}s{m.isTimeout?" ⏱":""}</span>
+                  </div>
+                  <span>You: <b>{m.userAction}</b> · Correct: <b>{m.correctAction}</b> · Conf {m.zoneConf}% vs Thresh {m.thresh}%</span>
+                </div>
+              );
+            })}
+          </>)}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={startRound} style={{flex:1,padding:"12px 0",borderRadius:10,border:"none",background:"#111827",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Play Again</button>
+          <button onClick={()=>setPhase("ready")} style={{flex:1,padding:"12px 0",borderRadius:10,border:"1px solid #e5e7eb",background:"#fff",color:"#374151",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Back</button>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+// ============================================================
 // MAIN
 // ============================================================
-const TABS=[{key:"simulator",label:"Simulator"},{key:"matrix",label:"RE Matrix"},{key:"thresholds",label:"Thresholds"},{key:"methodology",label:"Methodology"}];
+const TABS=[{key:"simulator",label:"Simulator"},{key:"matrix",label:"RE Matrix"},{key:"thresholds",label:"Thresholds"},{key:"methodology",label:"Methodology"},{key:"training",label:"Training"}];
 
 export default function App(){
   const[tab,setTab]=useState("simulator");
@@ -1567,6 +2189,7 @@ export default function App(){
         {tab==="matrix"&&<MatrixView {...{mOuts,setMOuts,mView,setMView}} seg={(active)=>({padding:"5px 14px",borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"})}/>}
         {tab==="thresholds"&&<ThresholdMatrix/>}
         {tab==="methodology"&&<Methodology/>}
+        {tab==="training"&&<TrainingMode/>}
       </div>
     </div>
   );
