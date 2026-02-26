@@ -2268,8 +2268,8 @@ export default function App(){
     return null;
   },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
 
-  // Context-dependent sigma: Hawk-Eye (live/demo) is extremely precise, manual has real uncertainty
-  const activeSigma = mode === "manual" ? 1.0 : 0.25;
+  // Context-dependent sigma: Hawk-Eye (live/demo) σ=0.25, Trackman (csv/ws) σ=1.0, manual σ=1.0
+  const activeSigma = mode === "manual" ? 1.0 : (isLive && trackmanActive) ? 1.0 : 0.25;
 
   // Use pre-pitch state for challenge analysis when we have pitch data
   const activeCount=activePitch?.preCount||rawCount;
