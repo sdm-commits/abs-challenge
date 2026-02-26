@@ -85,7 +85,7 @@ const EFF_LEFT = ZONE_LEFT - BALL_R;
 const EFF_RIGHT = ZONE_RIGHT + BALL_R;
 const EFF_TOP = ZONE_TOP + BALL_R;
 const EFF_BOT = ZONE_BOT - BALL_R;
-const SIGMA = 1.0 / 12;        // 1 inch in feet
+const SIGMA = 0.25 / 12;       // 0.25 inch in feet (Hawk-Eye precision)
 
 function gaussianCdf(x) {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
