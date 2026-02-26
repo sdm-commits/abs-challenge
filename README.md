@@ -86,7 +86,7 @@ Zone confidence is calculated automatically from pitch location data:
 ```
 zoneWidth  = (17 + 2.9) / 12    // plate width + ball diameter, in feet
 distance   = pitch distance from nearest zone edge
-confidence = Φ(distance / σ)     // σ = 1.0 inch
+confidence = Φ(distance / σ)     // σ = 1.0 inch for manual modes, σ = 0.25 inch for Hawkeye, σ = 1.0 inch for Trackman
 ```
 
 Strike zone boundaries use `sz_top` and `sz_bot` from Statcast when available, or configurable defaults (3.5 / 1.6 ft) for Trackman data where per-batter zone heights are not included in the CSV.
