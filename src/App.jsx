@@ -446,10 +446,11 @@ function useLiveGame(gamePk){
   const pitchTimer=useRef(null);
   const lastPitchId=useRef(null);
   const lastAbIndex=useRef(null);
+  const lastEventIdx=useRef(-1); // track last processed event index to avoid skipping pitches
   const lsSnap=useRef(null); // snapshot of linescore state for pitch context
 
   useEffect(()=>{
-    if(!gamePk){setState(null);setPitch(null);setPitchSequence([]);setLastPlayResult(null);setRecentPlays([]);setErr(null);lastPitchId.current=null;lastAbIndex.current=null;lsSnap.current=null;return;}
+    if(!gamePk){setState(null);setPitch(null);setPitchSequence([]);setLastPlayResult(null);setRecentPlays([]);setErr(null);lastPitchId.current=null;lastAbIndex.current=null;lastEventIdx.current=-1;lsSnap.current=null;return;}
     let cancelled=false;
 
     // Linescore poll — game state every 5s
@@ -534,48 +535,57 @@ function useLiveGame(gamePk){
         const curPlay=curPlayData;
         const events=curPlay?.playEvents;
         if(!events||events.length===0)return;
-        let lastP=null;
-        for(let i=events.length-1;i>=0;i--){if(events[i].isPitch){lastP=events[i];break;}}
-        if(!lastP)return;
         const curAbIndex=curPlay?.atBatIndex;
-        const pitchId=`${curAbIndex}-${lastP.index}`;
-        // Clear pitch when a new at-bat starts (K, BB, in-play ended previous AB)
+        // Clear pitch & reset event tracking when a new at-bat starts
         if(curAbIndex!==lastAbIndex.current){
           lastAbIndex.current=curAbIndex;
-          if(lastPitchId.current!==null)setPitch(null); // clear stale pitch from previous AB
+          if(lastPitchId.current!==null)setPitch(null);
+          lastEventIdx.current=-1;
         }
-        // If same pitch but AB just completed, update with result
-        if(pitchId===lastPitchId.current){
-          const result=curPlay?.about?.isComplete?curPlay?.result?.event:null;
-          if(result){setPitch(prev=>prev?{...prev,result}:prev);}
-          return;
+        // Scan backwards through all NEW events for the most recent called B/C
+        // This prevents skipping called pitches when polls miss intermediate events
+        let calledPitch=null;
+        for(let i=events.length-1;i>=0;i--){
+          const ev=events[i];
+          if(!ev.isPitch)continue;
+          if(ev.index<=lastEventIdx.current)break; // already processed everything up to here
+          const cc=ev.details?.call?.code;
+          if(cc==="C"||cc==="B"){calledPitch=ev;break;}
         }
-        lastPitchId.current=pitchId;
-        const callCode=lastP.details?.call?.code;
-        if(callCode==="C"||callCode==="B"){
-          const pX=lastP.pitchData?.coordinates?.pX;
-          const pZ=lastP.pitchData?.coordinates?.pZ;
+        // Update high-water mark to latest event index
+        const latestPitch=events.findLast(e=>e.isPitch);
+        if(latestPitch)lastEventIdx.current=Math.max(lastEventIdx.current,latestPitch.index);
+        // If we found a new called pitch, display it
+        if(calledPitch){
+          const pitchId=`${curAbIndex}-${calledPitch.index}`;
+          if(pitchId===lastPitchId.current){
+            const result=curPlay?.about?.isComplete?curPlay?.result?.event:null;
+            if(result){setPitch(prev=>prev?{...prev,result}:prev);}
+            return;
+          }
+          lastPitchId.current=pitchId;
+          const callCode=calledPitch.details?.call?.code;
+          const pX=calledPitch.pitchData?.coordinates?.pX;
+          const pZ=calledPitch.pitchData?.coordinates?.pZ;
           if(pX!=null&&pZ!=null){
-            // Compute pre-pitch count by reversing the call from post-pitch count
-            const postB=lastP.count?.balls??0,postS=lastP.count?.strikes??0;
+            const postB=calledPitch.count?.balls??0,postS=calledPitch.count?.strikes??0;
             let preB,preS;
             if(callCode==="B"){preB=postB-1;preS=postS;}
             else{preB=postB;preS=postS-1;}
             const preCount=`${Math.max(0,preB)}-${Math.min(2,Math.max(0,preS))}`;
-            // Outs from pitch event (stable during AB), bases from linescore snapshot
-            const preOuts=Math.min(lastP.count?.outs??0,2);
+            const preOuts=Math.min(calledPitch.count?.outs??0,2);
             const preBases=lsSnap.current?.bases||"000";
             const result=curPlay?.about?.isComplete?curPlay?.result?.event:null;
             setPitch({pX,pZ,
-              szTop:lastP.pitchData?.strikeZoneTop??3.5,
-              szBot:lastP.pitchData?.strikeZoneBottom??1.6,
+              szTop:calledPitch.pitchData?.strikeZoneTop??3.5,
+              szBot:calledPitch.pitchData?.strikeZoneBottom??1.6,
               call:callCode==="C"?"strike":"ball",
-              type:lastP.details?.type?.description||lastP.details?.type?.code||"",
-              speed:lastP.pitchData?.startSpeed?`${Math.round(lastP.pitchData.startSpeed)} mph`:"",
+              type:calledPitch.details?.type?.description||calledPitch.details?.type?.code||"",
+              speed:calledPitch.pitchData?.startSpeed?`${Math.round(calledPitch.pitchData.startSpeed)} mph`:"",
               preCount,preOuts,preBases,result,
             });
           }
-        }else{setPitch(null);}
+        }
       }catch(e){/* pitch fetch failed, keep going */}
       finally{if(!cancelled)pitchTimer.current=setTimeout(pollPitch,10000);}
     }
