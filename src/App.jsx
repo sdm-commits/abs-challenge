@@ -54,8 +54,7 @@ function normCDF(x){
   return x>0?1-p:p;
 }
 
-function confidenceFromDist(distInches){
-  const sigma=1.0;
+function confidenceFromDist(distInches, sigma = 1.0){
   return Math.max(5,Math.min(95,Math.round(normCDF(distInches/sigma)*100)));
 }
 
@@ -659,20 +658,20 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
   );
 }
 
-function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear}){
+function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0}){
   const green="#16a34a",red="#dc2626";
   const zone=useMemo(()=>{
     if(!pitch)return null;
     const dist=getDistFromZone(pitch.pX,pitch.pZ,pitch.szTop,pitch.szBot);
     const inside=dist<0;
-    const pOutside=confidenceFromDist(dist);
+    const pOutside=confidenceFromDist(dist,sigma);
     const pInside=100-pOutside;
     const conf=pitch.call==="strike"?pOutside:pInside;
     const shouldChallenge=conf>=thresh;
     const challengerPersp=pitch.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
     return{dist,inside,conf,shouldChallenge,canChallenge};
-  },[pitch,thresh,persp]);
+  },[pitch,thresh,persp,sigma]);
 
   const hasPitch=!!pitch;
   const{dist,inside,conf,shouldChallenge,canChallenge}=zone||{};
@@ -2269,6 +2268,9 @@ export default function App(){
     return null;
   },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
 
+  // Context-dependent sigma: Hawk-Eye (live/demo) is extremely precise, manual has real uncertainty
+  const activeSigma = mode === "manual" ? 1.0 : 0.25;
+
   // Use pre-pitch state for challenge analysis when we have pitch data
   const activeCount=activePitch?.preCount||rawCount;
   const activeOuts=activePitch?.preOuts??rawOuts;
@@ -2858,7 +2860,7 @@ export default function App(){
                   </div>
                 );
                 const dist=getDistFromZone(activePitch.pX,activePitch.pZ,activePitch.szTop,activePitch.szBot);
-                const pOutside=confidenceFromDist(dist);
+                const pOutside=confidenceFromDist(dist,activeSigma);
                 const conf=activePitch.call==="strike"?pOutside:100-pOutside;
                 const challengerPersp=activePitch.call==="strike"?"offense":"defense";
                 const canChallenge=persp===challengerPersp;
@@ -2908,6 +2910,7 @@ export default function App(){
                   tmBases={tmBases}
                   sort={tmCsvSort}
                   onSort={setTmCsvSort}
+                  sigma={activeSigma}
                 />
               )}
 
@@ -2915,16 +2918,18 @@ export default function App(){
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
+                sigma={activeSigma}
                 interactive
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={activeSigma}/>}
               {/* Trackman paste/ws/csv-step zone card */}
               {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
+                sigma={activeSigma}
                 interactive={trackmanMethod==="paste"}
                 onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
                   const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
@@ -2980,7 +2985,7 @@ export default function App(){
 // ============================================================
 // CSV LIST VIEW
 // ============================================================
-function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sort,onSort}){
+function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sort,onSort,sigma=1.0}){
   const green="#16a34a",red="#dc2626",yellow="#eab308";
   // Compute analysis for each row
   const rows=useMemo(()=>data.map((row,i)=>{
@@ -2990,7 +2995,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     const b=row.preBases||tmBases;
     if(!RE[o]?.[b]?.[c])return{...row,idx:i,verdict:"—",conf:null,dRE:null,thresh:null};
     const dist=getDistFromZone(row.pX,row.pZ,row.szTop,row.szBot);
-    const pOutside=confidenceFromDist(dist);
+    const pOutside=confidenceFromDist(dist,sigma);
     const conf=row.call==="strike"?pOutside:100-pOutside;
     const challengerPersp=row.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
@@ -3019,7 +3024,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     else if(gap<=-MARGIN)verdict="HOLD";
     else verdict="CLOSE";
     return{...row,idx:i,verdict,conf,dRE,thresh,canChallenge};
-  }),[data,persp,tmCount,tmOuts,tmBases]);
+  }),[data,persp,tmCount,tmOuts,tmBases,sigma]);
 
   const sorted=useMemo(()=>{
     if(!sort)return rows;
