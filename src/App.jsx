@@ -38,6 +38,12 @@ function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 const BALL_RADIUS_FT=1.45/12; // half of 2.9" ball diameter — any part of the ball clipping the zone is a strike
 const ZONE_WIDTH_FT=(17+2.9)/12; // plate width + ball diameter (Statcast pX = ball center)
 const ZONE_HALF=ZONE_WIDTH_FT/2;
+// Empirical Gaussian σ from MLB 2026 umpire-call accuracy: at any |edge_dist|, what
+// fraction of called pitches did the umpire get wrong? Fit against 64,499 called pitches.
+// Asymmetric — umpires are noisier on strike calls (zone-expansion bias) than ball calls.
+const SIGMA_CALLED_STRIKE = 1.48;
+const SIGMA_CALLED_BALL   = 1.24;
+const sigmaForCall = (call) => call === "strike" ? SIGMA_CALLED_STRIKE : SIGMA_CALLED_BALL;
 
 function getDistFromZone(pX,pZ,szTop,szBot){
   const xDist=Math.abs(pX)-ZONE_HALF;
@@ -682,20 +688,20 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
   );
 }
 
-function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0}){
+function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear}){
   const green="#16a34a",red="#dc2626";
   const zone=useMemo(()=>{
     if(!pitch)return null;
     const dist=getDistFromZone(pitch.pX,pitch.pZ,pitch.szTop,pitch.szBot);
     const inside=dist<0;
-    const pOutside=confidenceFromDist(dist,sigma);
+    const pOutside=confidenceFromDist(dist,sigmaForCall(pitch.call));
     const pInside=100-pOutside;
     const conf=pitch.call==="strike"?pOutside:pInside;
     const shouldChallenge=conf>=thresh;
     const challengerPersp=pitch.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
     return{dist,inside,conf,shouldChallenge,canChallenge};
-  },[pitch,thresh,persp,sigma]);
+  },[pitch,thresh,persp]);
 
   const hasPitch=!!pitch;
   const{dist,inside,conf,shouldChallenge,canChallenge}=zone||{};
@@ -2293,7 +2299,7 @@ export default function App(){
   },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
 
   // Context-dependent sigma: Hawk-Eye (live/demo) σ=0.25, Trackman (csv/ws) σ=1.0, manual σ=1.0
-  const activeSigma = mode === "manual" ? 1.0 : (isLive && trackmanActive) ? 1.0 : 0.25;
+  // σ is now derived per-pitch from call type via sigmaForCall (umpire-empirical from MLB 2026).
 
   // Use pre-pitch state for challenge analysis when we have pitch data
   const activeCount=activePitch?.preCount||rawCount;
@@ -2884,7 +2890,7 @@ export default function App(){
                   </div>
                 );
                 const dist=getDistFromZone(activePitch.pX,activePitch.pZ,activePitch.szTop,activePitch.szBot);
-                const pOutside=confidenceFromDist(dist,activeSigma);
+                const pOutside=confidenceFromDist(dist,sigmaForCall(activePitch.call));
                 const conf=activePitch.call==="strike"?pOutside:100-pOutside;
                 const challengerPersp=activePitch.call==="strike"?"offense":"defense";
                 const canChallenge=persp===challengerPersp;
@@ -2934,7 +2940,6 @@ export default function App(){
                   tmBases={tmBases}
                   sort={tmCsvSort}
                   onSort={setTmCsvSort}
-                  sigma={activeSigma}
                 />
               )}
 
@@ -2942,18 +2947,16 @@ export default function App(){
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
-                sigma={activeSigma}
                 interactive
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={activeSigma}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
               {/* Trackman paste/ws/csv-step zone card */}
               {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
-                sigma={activeSigma}
                 interactive={trackmanMethod==="paste"}
                 onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
                   const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
@@ -3009,7 +3012,7 @@ export default function App(){
 // ============================================================
 // CSV LIST VIEW
 // ============================================================
-function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sort,onSort,sigma=1.0}){
+function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sort,onSort}){
   const green="#16a34a",red="#dc2626",yellow="#eab308";
   // Compute analysis for each row
   const rows=useMemo(()=>data.map((row,i)=>{
@@ -3019,7 +3022,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     const b=row.preBases||tmBases;
     if(!RE[o]?.[b]?.[c])return{...row,idx:i,verdict:"—",conf:null,dRE:null,thresh:null};
     const dist=getDistFromZone(row.pX,row.pZ,row.szTop,row.szBot);
-    const pOutside=confidenceFromDist(dist,sigma);
+    const pOutside=confidenceFromDist(dist,sigmaForCall(row.call));
     const conf=row.call==="strike"?pOutside:100-pOutside;
     const challengerPersp=row.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
@@ -3313,7 +3316,7 @@ function Methodology(){
 
       <div style={s}><div style={h}>Matchup Adjustment</div><p style={p}>The engine preloads season xwOBA for all players from Baseball Savant (via a serverless API endpoint) with a statsapi fallback. For each at-bat, it computes a matchup multiplier that scales ΔRE to reflect how the current batter-pitcher pairing compares to league average. This is our addition on top of Tango's base framework, which treats all matchups equally.</p><div style={code}>batterFactor = batterXwOBA / leagueXwOBA<br/>pitcherFactor = pitcherXwOBA_against / leagueXwOBA<br/>matchupMultiplier = batterFactor × pitcherFactor<br/>adjustedΔRE = ΔRE × matchupMultiplier</div><p style={{...p,marginTop:8}}>A league-average matchup produces a multiplier of ~1.0×, leaving the challenge decision unchanged. An elite hitter facing a bad pitcher can push ×1.3+, meaning the same base-out state swing is worth 30% more runs — lowering the break-even confidence threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar for when to challenge. The multiplier is clamped to [0.5, 2.0] to prevent extreme small-sample distortions.</p></div>
 
-      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective strike zone is expanded by the ball radius in <b>both</b> dimensions: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the zone. So the ball-center strike zone extends 9.95" from plate center horizontally (17" plate + 2.9" ball diameter, halved) and 1.45" beyond szTop/szBot vertically. A pitch grazing the top of the zone has its ball center 1.45" above szTop and is correctly classified as a strike. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width  = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>Vertical pad     = 1.45" / 12 = 0.121 ft  (above szTop / below szBot)<br/>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
+      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective strike zone is expanded by the ball radius in <b>both</b> dimensions: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the zone. So the ball-center strike zone extends 9.95" from plate center horizontally (17" plate + 2.9" ball diameter, halved) and 1.45" beyond szTop/szBot vertically. A pitch grazing the top of the zone has its ball center 1.45" above szTop and is correctly classified as a strike. The Gaussian σ is calibrated empirically from 64,499 MLB 2026 called pitches: at each |edge_dist|, what fraction of umpire calls disagreed with the ABS truth? Maximum-likelihood fit yields σ = 1.48" for called strikes and σ = 1.24" for called balls — umpires are noisier on strike calls (the classic zone-expansion bias) than on ball calls. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ_strike). For a called ball, confidence = P(pitch truly inside zone) = 1 − Φ(distance / σ_ball). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width   = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>Vertical pad      = 1.45" / 12 = 0.121 ft  (above szTop / below szBot)<br/>σ_called_strike   = 1.48"  (MLE on 20,889 called strikes, 8.94% wrong)<br/>σ_called_ball     = 1.24"  (MLE on 43,610 called balls, 3.87% wrong)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside),  σ = σ_called_strike<br/>Catcher challenges called ball → conf = P(inside),   σ = σ_called_ball<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
 
       <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features 8 real called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
 
