@@ -35,13 +35,14 @@ function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 // ============================================================
 // STRIKE ZONE — Gaussian confidence model
 // ============================================================
+const BALL_RADIUS_FT=1.45/12; // half of 2.9" ball diameter — any part of the ball clipping the zone is a strike
 const ZONE_WIDTH_FT=(17+2.9)/12; // plate width + ball diameter (Statcast pX = ball center)
 const ZONE_HALF=ZONE_WIDTH_FT/2;
 
 function getDistFromZone(pX,pZ,szTop,szBot){
   const xDist=Math.abs(pX)-ZONE_HALF;
-  const zDistHigh=pZ-szTop;
-  const zDistLow=szBot-pZ;
+  const zDistHigh=pZ-(szTop+BALL_RADIUS_FT);
+  const zDistLow=(szBot-BALL_RADIUS_FT)-pZ;
   const xIn=xDist<0,zIn=zDistHigh<0&&zDistLow<0;
   if(xIn&&zIn)return -Math.min(Math.abs(xDist),Math.abs(zDistHigh),Math.abs(zDistLow))*12;
   return Math.sqrt(Math.max(0,xDist)**2+Math.max(0,zDistHigh,zDistLow)**2)*12;
@@ -629,13 +630,25 @@ const DEMO_PLAYS=[
 // STRIKE ZONE COMPONENTS
 // ============================================================
 function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
-  const W=120,H=155;
-  const m={t:12,b:12,l:18,r:18};
-  const pW=W-m.l-m.r,pH=H-m.t-m.b;
+  const PX_PER_INCH=6; // uniform scale in both axes — keeps the ball circular and the zone to true proportions
   const xR=[-1.5,1.5],zR=[0.5,4.5];
+  const pW=(xR[1]-xR[0])*12*PX_PER_INCH,pH=(zR[1]-zR[0])*12*PX_PER_INCH;
+  const m={t:24,b:24,l:36,r:36};
+  const W=pW+m.l+m.r,H=pH+m.t+m.b;
   const sx=(ft)=>m.l+((ft-xR[0])/(xR[1]-xR[0]))*pW;
   const sy=(ft)=>m.t+((zR[1]-ft)/(zR[1]-zR[0]))*pH;
-  const zL=sx(-ZONE_HALF),zR2=sx(ZONE_HALF),zT=sy(szTop||3.5),zB=sy(szBot||1.6);
+  // Literal strike zone (solid box) — 17" plate × szTop/szBot
+  const PLATE_HALF_FT=17/24; // 0.7083 ft
+  const litT=szTop||3.5,litB=szBot||1.6;
+  const lzL=sx(-PLATE_HALF_FT),lzR=sx(PLATE_HALF_FT),lzT=sy(litT),lzB=sy(litB);
+  const lzW=lzR-lzL,lzH=lzB-lzT;
+  // Ball-center inclusion zone — used for strike/ball math (any part of ball clipping zone = strike)
+  const zT_eff=litT+BALL_RADIUS_FT,zB_eff=litB-BALL_RADIUS_FT;
+  // Shadow zone (dashed outer) — literal zone + 1 full ball width all around
+  const SHADOW_PAD_FT=2.9/12;
+  const SHADOW_HALF_FT=PLATE_HALF_FT+SHADOW_PAD_FT;
+  const shT=litT+SHADOW_PAD_FT,shB=litB-SHADOW_PAD_FT;
+  const zL=sx(-SHADOW_HALF_FT),zR2=sx(SHADOW_HALF_FT),zT=sy(shT),zB=sy(shB);
   const zW=zR2-zL,zH=zB-zT;
   const hasPitch=pX!=null&&pZ!=null;
   const px=hasPitch?sx(pX):0,py=hasPitch?sy(pZ):0;
@@ -644,7 +657,7 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
   const dotColor=call==="strike"?"#dc2626":"#16a34a";
   const lineColor=Math.abs(dist)<1.5?"#d97706":inside?"#16a34a":"#dc2626";
   let ex=px,ey=py;
-  if(hasPitch&&!inside){ex=sx(Math.max(-ZONE_HALF,Math.min(ZONE_HALF,pX)));ey=sy(Math.max(szBot||1.6,Math.min(szTop||3.5,pZ)));}
+  if(hasPitch&&!inside){ex=sx(Math.max(-ZONE_HALF,Math.min(ZONE_HALF,pX)));ey=sy(Math.max(zB_eff,Math.min(zT_eff,pZ)));}
   const handleClick=onClickZone?(e)=>{
     const rect=e.currentTarget.getBoundingClientRect();
     const svgX=(e.clientX-rect.left)/rect.width*W;
@@ -657,13 +670,14 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{borderRadius:6,flexShrink:0,cursor:interactive?"crosshair":"default"}} onClick={handleClick}>
       <rect width={W} height={H} fill="#fff" rx={6}/>
       <polygon points={`${sx(0)},${sy(0.4)} ${sx(-ZONE_HALF)},${sy(0.6)} ${sx(-ZONE_HALF)},${sy(0.7)} ${sx(ZONE_HALF)},${sy(0.7)} ${sx(ZONE_HALF)},${sy(0.6)}`} fill="#f3f4f6" stroke="#e5e7eb" strokeWidth={0.5}/>
-      <rect x={zL} y={zT} width={zW} height={zH} fill="#f9fafb" stroke="#9ca3af" strokeWidth={1.2}/>
-      {[1,2].map(i=><line key={`h${i}`} x1={zL} y1={zT+(zH/3)*i} x2={zR2} y2={zT+(zH/3)*i} stroke="#e5e7eb" strokeWidth={0.4}/>)}
-      {[1,2].map(i=><line key={`v${i}`} x1={zL+(zW/3)*i} y1={zT} x2={zL+(zW/3)*i} y2={zB} stroke="#e5e7eb" strokeWidth={0.4}/>)}
-      {hasPitch&&!inside&&<line x1={px} y1={py} x2={ex} y2={ey} stroke={lineColor} strokeWidth={1} strokeDasharray="2 1.5" opacity={0.7}/>}
-      {hasPitch&&!inside&&Math.abs(dist)>1&&<text x={(px+ex)/2+6} y={(py+ey)/2-1} fill={lineColor} fontSize={7} fontWeight={700} fontFamily="monospace">{dist.toFixed(1)}"</text>}
-      {hasPitch&&<circle cx={px} cy={py} r={4} fill={dotColor} opacity={0.9} stroke="#fff" strokeWidth={1}/>}
-      {interactive&&!hasPitch&&<text x={W/2} y={H/2} textAnchor="middle" fontSize={8} fill="#d1d5db">Tap zone</text>}
+      <rect x={zL} y={zT} width={zW} height={zH} fill="none" stroke="#94a3b8" strokeWidth={1} strokeDasharray="4 3"/>
+      <rect x={lzL} y={lzT} width={lzW} height={lzH} fill="#f9fafb" stroke="#9ca3af" strokeWidth={1.2}/>
+      {[1,2].map(i=><line key={`h${i}`} x1={lzL} y1={lzT+(lzH/3)*i} x2={lzR} y2={lzT+(lzH/3)*i} stroke="#e5e7eb" strokeWidth={0.4}/>)}
+      {[1,2].map(i=><line key={`v${i}`} x1={lzL+(lzW/3)*i} y1={lzT} x2={lzL+(lzW/3)*i} y2={lzB} stroke="#e5e7eb" strokeWidth={0.4}/>)}
+      {hasPitch&&!inside&&<line x1={px} y1={py} x2={ex} y2={ey} stroke={lineColor} strokeWidth={2} strokeDasharray="4 3" opacity={0.7}/>}
+      {hasPitch&&!inside&&Math.abs(dist)>1&&<text x={(px+ex)/2+12} y={(py+ey)/2-2} fill={lineColor} fontSize={12} fontWeight={700} fontFamily="monospace">{dist.toFixed(1)}"</text>}
+      {hasPitch&&<circle cx={px} cy={py} r={BALL_RADIUS_FT*12*PX_PER_INCH} fill={dotColor} opacity={0.85} stroke="#fff" strokeWidth={1.5}/>}
+      {interactive&&!hasPitch&&<text x={W/2} y={H/2} textAnchor="middle" fontSize={14} fill="#d1d5db">Tap zone</text>}
     </svg>
   );
 }
@@ -3299,7 +3313,7 @@ function Methodology(){
 
       <div style={s}><div style={h}>Matchup Adjustment</div><p style={p}>The engine preloads season xwOBA for all players from Baseball Savant (via a serverless API endpoint) with a statsapi fallback. For each at-bat, it computes a matchup multiplier that scales ΔRE to reflect how the current batter-pitcher pairing compares to league average. This is our addition on top of Tango's base framework, which treats all matchups equally.</p><div style={code}>batterFactor = batterXwOBA / leagueXwOBA<br/>pitcherFactor = pitcherXwOBA_against / leagueXwOBA<br/>matchupMultiplier = batterFactor × pitcherFactor<br/>adjustedΔRE = ΔRE × matchupMultiplier</div><p style={{...p,marginTop:8}}>A league-average matchup produces a multiplier of ~1.0×, leaving the challenge decision unchanged. An elite hitter facing a bad pitcher can push ×1.3+, meaning the same base-out state swing is worth 30% more runs — lowering the break-even confidence threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar for when to challenge. The multiplier is clamped to [0.5, 2.0] to prevent extreme small-sample distortions.</p></div>
 
-      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective zone width accounts for the ball diameter: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the plate, so the zone boundary for ball-center coordinates is (17" + 2.9") / 2 = 9.95" from center. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
+      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective strike zone is expanded by the ball radius in <b>both</b> dimensions: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the zone. So the ball-center strike zone extends 9.95" from plate center horizontally (17" plate + 2.9" ball diameter, halved) and 1.45" beyond szTop/szBot vertically. A pitch grazing the top of the zone has its ball center 1.45" above szTop and is correctly classified as a strike. Hawk-Eye/Statcast accuracy is approximately ±0.5 inches; combined with zone definition uncertainty, we model total measurement error as σ = 1.0 inch. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ). For a called ball, confidence = P(pitch truly inside zone) = 1 - Φ(distance / σ). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width  = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>Vertical pad     = 1.45" / 12 = 0.121 ft  (above szTop / below szBot)<br/>σ = 1.0" (Hawk-Eye ±0.5" + zone uncertainty)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside)<br/>Catcher challenges called ball → conf = P(inside) = 1 - P(outside)<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
 
       <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features 8 real called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
 
