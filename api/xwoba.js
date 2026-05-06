@@ -105,19 +105,28 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: "No data from Savant" });
     }
 
-    const players = {
-      ...parsePlayers(batterRows, "batter"),
-      ...parsePlayers(pitcherRows, "pitcher"),
-    };
+    // Merge by player_id so two-way players (Ohtani et al.) keep BOTH xwobas.
+    const batterDict = parsePlayers(batterRows, "batter");
+    const pitcherDict = parsePlayers(pitcherRows, "pitcher");
+    const players = {};
+    for (const pid of new Set([...Object.keys(batterDict), ...Object.keys(pitcherDict)])) {
+      const b = batterDict[pid];
+      const p = pitcherDict[pid];
+      const entry = { name: (b || p).name };
+      if (b) { entry.batter_xwoba = b.xwoba; entry.batter_pa = b.pa; }
+      if (p) { entry.pitcher_xwoba = p.xwoba; entry.pitcher_pa = p.pa; }
+      players[pid] = entry;
+    }
 
     // Compute league average from batters with 50+ PA
     const qualified = Object.values(players).filter(
-      (p) => p.type === "batter" && p.pa >= 50
+      (p) => (p.batter_pa || 0) >= 50
     );
     const lg_xwoba =
       qualified.length > 0
         ? Math.round(
-            (qualified.reduce((s, p) => s + p.xwoba, 0) / qualified.length) *
+            (qualified.reduce((s, p) => s + p.batter_xwoba, 0) /
+              qualified.length) *
               1000
           ) / 1000
         : 0.315;
