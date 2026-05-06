@@ -376,7 +376,13 @@ function usePlayerStats(gamePk,mode){
           for(const id of ids){
             const p=xData.players[String(id)];
             if(p){
-              map[id]={xwoba:p.xwoba,type:p.type||classify[id]||"batter",name:p.name||""};
+              // Pass through both batter_xwoba and pitcher_xwoba so the matchup lookup
+              // can pick the right one for two-way players (Ohtani et al.).
+              map[id]={
+                name:p.name||"",
+                batter_xwoba:p.batter_xwoba ?? (p.type==="batter"?p.xwoba:undefined),
+                pitcher_xwoba:p.pitcher_xwoba ?? (p.type==="pitcher"?p.xwoba:undefined),
+              };
             }else{
               missing.push(id);
             }
@@ -411,7 +417,12 @@ function usePlayerStats(gamePk,mode){
                 const st=hs?.splits?.find(sp=>sp.gameType==="R")?.stat;
                 if(st){const obp=parseFloat(st.obp)||0,slg=parseFloat(st.slg)||0;if(obp+slg>0)xwoba=opsToXwoba(obp,slg);}
               }
-              if(!map[id])map[id]={xwoba,type,name:person.fullName||""};
+              if(!map[id]){
+                const entry={name:person.fullName||""};
+                if(type==="pitcher")entry.pitcher_xwoba=xwoba;
+                else entry.batter_xwoba=xwoba;
+                map[id]=entry;
+              }
             }
           }
         }
@@ -2257,26 +2268,22 @@ export default function App(){
     if(file&&file.name.endsWith(".csv"))loadCsvFile(file);
   },[loadCsvFile]);
 
-  // Matchup multiplier (live and demo mode)
+  // Matchup multiplier (live and demo mode). Two-way players (Ohtani et al.) have
+  // separate batter_xwoba and pitcher_xwoba — pick by role at lookup time.
   const matchup=useMemo(()=>{
-    if(mode==="demo"){
-      const bSt=DEMO_STATS[demoPlay.batterId],pSt=DEMO_STATS[demoPlay.pitcherId];
-      const bXw=bSt?.xwoba,pXw=pSt?.xwoba;
+    const xwForBatter=(p)=>p?.batter_xwoba ?? (p?.type==="batter"?p?.xwoba:null);
+    const xwForPitcher=(p)=>p?.pitcher_xwoba ?? (p?.type==="pitcher"?p?.xwoba:null);
+    const compute=(bSt,pSt)=>{
+      const bXw=xwForBatter(bSt),pXw=xwForPitcher(pSt);
       let mult=1;
       if(bXw!=null&&bXw>0&&pXw!=null&&pXw>0){
         mult=Math.max(0.5,Math.min(2.0,(bXw/LG_XWOBA)*(pXw/LG_XWOBA)));
       }
       return{mult,batterXw:bXw,pitcherXw:pXw,batterName:bSt?.name||"",pitcherName:pSt?.name||""};
-    }
+    };
+    if(mode==="demo")return compute(DEMO_STATS[demoPlay.batterId],DEMO_STATS[demoPlay.pitcherId]);
     if(mode!=="live"&&mode!=="signal"||!liveState)return{mult:1,batterXw:null,pitcherXw:null,batterName:"",pitcherName:""};
-    const bId=liveState.batterId,pId=liveState.pitcherId;
-    const bSt=bId&&playerStats[bId],pSt=pId&&playerStats[pId];
-    const bXw=bSt?.xwoba,pXw=pSt?.xwoba;
-    let mult=1;
-    if(bXw!=null&&bXw>0&&pXw!=null&&pXw>0){
-      mult=Math.max(0.5,Math.min(2.0,(bXw/LG_XWOBA)*(pXw/LG_XWOBA)));
-    }
-    return{mult,batterXw:bXw,pitcherXw:pXw,batterName:bSt?.name||"",pitcherName:pSt?.name||""};
+    return compute(liveState.batterId&&playerStats[liveState.batterId],liveState.pitcherId&&playerStats[liveState.pitcherId]);
   },[mode,liveState,playerStats,demoPlay]);
 
   // Derived: which game state to use
@@ -2493,7 +2500,8 @@ export default function App(){
                             {(liveState.batter||liveState.pitcher)&&(()=>{
                               const bId=liveState.batterId,pId=liveState.pitcherId;
                               const bSt=bId&&playerStats[bId],pSt=pId&&playerStats[pId];
-                              const bXw=bSt?.xwoba,pXw=pSt?.xwoba;
+                              const bXw=bSt?.batter_xwoba ?? (bSt?.type==="batter"?bSt?.xwoba:null);
+                              const pXw=pSt?.pitcher_xwoba ?? (pSt?.type==="pitcher"?pSt?.xwoba:null);
                               const bF=bXw?bXw/LG_XWOBA:1,pF=pXw?pXw/LG_XWOBA:1;
                               const bAdv=bF-1,pAdv=1-pF,diff=bAdv-pAdv,thresh=0.05;
                               const bEdge=diff>thresh,pEdge=diff<-thresh;
