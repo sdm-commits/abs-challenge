@@ -22,26 +22,35 @@ async function fetchSavantCSV(type, year) {
   return res.text();
 }
 
-function parseCSV(text) {
-  // Simple CSV parser — handles quoted fields
-  const lines = text.trim().split("\n");
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-  return lines.slice(1).map((line) => {
-    const vals = [];
-    let cur = "";
-    let inQuote = false;
-    for (const ch of line) {
-      if (ch === '"') {
-        inQuote = !inQuote;
-      } else if (ch === "," && !inQuote) {
-        vals.push(cur.trim());
-        cur = "";
-      } else {
-        cur += ch;
-      }
+function splitCSVRow(line) {
+  // Quote-aware split: respects "..." enclosing fields that contain commas.
+  const vals = [];
+  let cur = "";
+  let inQuote = false;
+  for (const ch of line) {
+    if (ch === '"') {
+      inQuote = !inQuote;
+    } else if (ch === "," && !inQuote) {
+      vals.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
     }
-    vals.push(cur.trim());
+  }
+  vals.push(cur.trim());
+  return vals;
+}
+
+function parseCSV(text) {
+  // Strip UTF-8 BOM (Savant CSVs start with ﻿) before splitting.
+  const clean = text.replace(/^﻿/, "").trim();
+  const lines = clean.split("\n");
+  if (lines.length < 2) return [];
+  // Header must use the SAME quote-aware split as rows — Savant's first column is
+  // literally "last_name, first_name" (one column with an embedded comma).
+  const headers = splitCSVRow(lines[0]).map((h) => h.replace(/^"|"$/g, ""));
+  return lines.slice(1).map((line) => {
+    const vals = splitCSVRow(line);
     const obj = {};
     headers.forEach((h, i) => {
       obj[h] = vals[i] || "";
