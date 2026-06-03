@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Local tooling / editor
+.claude/
+
+# OS
+.DS_Store

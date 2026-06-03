@@ -38,12 +38,14 @@ function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 const BALL_RADIUS_FT=1.45/12; // half of 2.9" ball diameter — any part of the ball clipping the zone is a strike
 const ZONE_WIDTH_FT=(17+2.9)/12; // plate width + ball diameter (Statcast pX = ball center)
 const ZONE_HALF=ZONE_WIDTH_FT/2;
-// Empirical Gaussian σ from MLB 2026 umpire-call accuracy: at any |edge_dist|, what
-// fraction of called pitches did the umpire get wrong? Fit against 64,499 called pitches.
-// Asymmetric — umpires are noisier on strike calls (zone-expansion bias) than ball calls.
-const SIGMA_CALLED_STRIKE = 1.48;
-const SIGMA_CALLED_BALL   = 1.24;
-const sigmaForCall = (call) => call === "strike" ? SIGMA_CALLED_STRIKE : SIGMA_CALLED_BALL;
+// Zone-confidence σ (inches) by data source. Hawk-Eye / Statcast (live, signal, demo)
+// measures the true location, so confidence runs near-deterministic against the ABS zone;
+// Trackman is close behind; manual placement is a human read, so it stays wide.
+const SIGMA_HAWKEYE  = 0.25; // live / signal / demo — exact optical tracking
+const SIGMA_TRACKMAN = 1.0;  // Trackman CSV / websocket / paste
+const SIGMA_MANUAL   = 1.0;  // hypothetical click placement
+const sigmaForMode = (mode, trackmanActive) =>
+  trackmanActive ? SIGMA_TRACKMAN : mode === "manual" ? SIGMA_MANUAL : SIGMA_HAWKEYE;
 
 function getDistFromZone(pX,pZ,szTop,szBot){
   const xDist=Math.abs(pX)-ZONE_HALF;
@@ -101,16 +103,29 @@ function gaussianCdf(x) {
   return x > 0 ? 1 - p : p;
 }
 
-function getZoneConfidence(px, pz) {
-  const isOutside = px < EFF_LEFT || px > EFF_RIGHT || pz < EFF_BOT || pz > EFF_TOP;
+function getZoneConfidence(px, pz, szTop = ZONE_TOP, szBot = ZONE_BOT) {
+  // P(pitch is outside the zone / a ball). Horizontal edges are fixed (17" plate),
+  // but the vertical edges come from this batter's strike zone — pass szTop/szBot so
+  // historical and Trackman pitches are judged against the real (not default) zone.
+  const effTop = szTop + BALL_R, effBot = szBot - BALL_R;
+  const isOutside = px < EFF_LEFT || px > EFF_RIGHT || pz < effBot || pz > effTop;
   if (isOutside) {
     const dx = Math.max(EFF_LEFT - px, px - EFF_RIGHT, 0);
-    const dz = Math.max(EFF_BOT - pz, pz - EFF_TOP, 0);
+    const dz = Math.max(effBot - pz, pz - effTop, 0);
     return gaussianCdf(Math.max(dx, dz) / SIGMA);
   }
   const dxIn = Math.min(px - EFF_LEFT, EFF_RIGHT - px);
-  const dzIn = Math.min(pz - EFF_BOT, EFF_TOP - pz);
+  const dzIn = Math.min(pz - effBot, effTop - pz);
   return 1 - gaussianCdf(Math.min(dxIn, dzIn) / SIGMA);
+}
+
+// Confidence (5–95%) that the umpire's CALL was wrong, from the challenger's side.
+// A batter challenges a called strike — wrong iff the pitch was actually a ball (outside).
+// A catcher challenges a called ball — wrong iff the pitch was actually a strike (inside).
+function callWrongConfidence(px, pz, szTop, szBot, perspective) {
+  const pBall = getZoneConfidence(px, pz, szTop, szBot);
+  const pWrong = perspective === "batter" ? pBall : 1 - pBall;
+  return Math.max(5, Math.min(95, Math.round(pWrong * 100)));
 }
 
 // ============================================================
@@ -198,8 +213,8 @@ function pickGameState(difficulty) {
 function generateScenario(difficulty, perspective) {
   const gs = pickGameState(difficulty);
   const { pitchX, pitchZ } = generatePitchLocation(difficulty);
-  const rawConf = getZoneConfidence(pitchX, pitchZ);
-  const zoneConf = Math.max(5, Math.min(95, Math.round(rawConf * 100)));
+  // Random pitches are generated against the default zone, so szTop/szBot are the defaults.
+  const zoneConf = callWrongConfidence(pitchX, pitchZ, ZONE_TOP, ZONE_BOT, perspective);
   const [b, s] = gs.count.split("-").map(Number);
   const thresh = getTangoThresh(gs.bases, gs.outs, b, s);
   const tier = getTier(thresh);
@@ -225,7 +240,7 @@ function generateScenario(difficulty, perspective) {
   const COST = 0.20;
   const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
   const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
-  return { ...gs, pitchX, pitchZ, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor };
+  return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor };
 }
 
 // ============================================================
@@ -638,7 +653,7 @@ const DEMO_PLAYS=[
     pitch:{pX:0.266,pZ:3.401,szTop:3.38,szBot:1.62,call:"ball",type:"Sinker",speed:"92.1 mph",preCount:"1-1"}},
   {label:"Giménez vs Glasnow",sub:"Bot 6 · 0 out · Runner on 1st · LAD 2, TOR 4",note:"5 called pitches in this at-bat — a full-count battle. Giménez doubles to drive in the run. Runner on 1st, nobody out.",count:"3-2",outs:0,bases:"100",inn:6,isTop:false,away:2,home:4,batterId:665926,pitcherId:607192,batter:"Andrés Giménez",pitcher:"Tyler Glasnow",result:"Double",
     pitch:{pX:-0.573,pZ:2.338,szTop:3.50,szBot:1.70,call:"strike",type:"Four-Seam Fastball",speed:"96.1 mph",preCount:"3-1"}},
-  {label:"Muncy HR off Yesavage",sub:"Top 8 · 1 out · Bases empty · LAD 2, TOR 4",note:"Down 2 in the 8th, Muncy launches a solo homer to cut the deficit. Called strike on 0-1 was actually 3.7\" outside the zone.",count:"0-1",outs:1,bases:"000",inn:8,isTop:true,away:2,home:4,batterId:571970,pitcherId:702056,batter:"Max Muncy",pitcher:"Trey Yesavage",result:"Home Run",
+  {label:"Muncy HR off Yesavage",sub:"Top 8 · 1 out · Bases empty · LAD 2, TOR 4",note:"Down 2 in the 8th, Muncy launches a solo homer to cut the deficit. Called strike on 0-1 was actually 2.2\" outside the zone.",count:"0-1",outs:1,bases:"000",inn:8,isTop:true,away:2,home:4,batterId:571970,pitcherId:702056,batter:"Max Muncy",pitcher:"Trey Yesavage",result:"Home Run",
     pitch:{pX:0.234,pZ:3.472,szTop:3.17,szBot:1.51,call:"strike",type:"Splitter",speed:"82.4 mph",preCount:"0-0"}},
   {label:"Schneider vs Snell",sub:"Bot 8 · 2 out · Runner on 2nd · LAD 3, TOR 4",note:"Snell protecting a 1-run lead. Called strike on 0-1, then the pivotal called strike on 2-2 — ball called a strike per ump scorecard (#3 most impactful).",count:"2-2",outs:2,bases:"010",inn:8,isTop:false,away:3,home:4,batterId:676914,pitcherId:605483,batter:"Davis Schneider",pitcher:"Blake Snell",result:"Strikeout",
     pitch:{pX:0.914,pZ:2.835,szTop:3.11,szBot:1.53,call:"strike",type:"Changeup",speed:"81.8 mph",preCount:"2-1"}},
@@ -708,20 +723,20 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
   );
 }
 
-function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear}){
+function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0}){
   const green="#16a34a",red="#dc2626";
   const zone=useMemo(()=>{
     if(!pitch)return null;
     const dist=getDistFromZone(pitch.pX,pitch.pZ,pitch.szTop,pitch.szBot);
     const inside=dist<0;
-    const pOutside=confidenceFromDist(dist,sigmaForCall(pitch.call));
+    const pOutside=confidenceFromDist(dist,sigma);
     const pInside=100-pOutside;
     const conf=pitch.call==="strike"?pOutside:pInside;
     const shouldChallenge=conf>=thresh;
     const challengerPersp=pitch.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
     return{dist,inside,conf,shouldChallenge,canChallenge};
-  },[pitch,thresh,persp]);
+  },[pitch,thresh,persp,sigma]);
 
   const hasPitch=!!pitch;
   const{dist,inside,conf,shouldChallenge,canChallenge}=zone||{};
@@ -887,21 +902,28 @@ function mapTrackmanRow(row){
 // ============================================================
 // ZONE GRAPHIC — SVG strike zone for training mode
 // ============================================================
-function ZoneGraphic({pitchX,pitchZ}){
-  const W=200,H=240;
-  const mapX=x=>(x+1.5)/3*W;
-  const mapZ=z=>H-(z-1.0)/3.2*H;
-  const zL=mapX(ZONE_LEFT),zR=mapX(ZONE_RIGHT),zT=mapZ(ZONE_TOP),zB=mapZ(ZONE_BOT);
-  const sL=mapX(EFF_LEFT),sR=mapX(EFF_RIGHT),sT=mapZ(EFF_TOP),sB=mapZ(EFF_BOT);
+function ZoneGraphic({pitchX,pitchZ,szTop=ZONE_TOP,szBot=ZONE_BOT}){
+  // Uniform scale in both axes so the zone, the gap, and the ball are all to true
+  // proportions (the old graphic stretched the vertical axis ~12%).
+  const PX_PER_FT=62.5;
+  const xR=[-1.6,1.6],zR=[0.7,4.3];
+  const W=Math.round((xR[1]-xR[0])*PX_PER_FT),H=Math.round((zR[1]-zR[0])*PX_PER_FT); // 200 × 225
+  const mapX=x=>(x-xR[0])*PX_PER_FT;
+  const mapZ=z=>H-(z-zR[0])*PX_PER_FT;
+  // Literal strike zone — 17" plate × this batter's sz_top/sz_bot
+  const zL=mapX(ZONE_LEFT),zRt=mapX(ZONE_RIGHT),zT=mapZ(szTop),zB=mapZ(szBot);
+  // Effective ABS zone — literal zone + one ball radius on every side (the strike/ball line)
+  const sL=mapX(ZONE_LEFT-BALL_R),sR=mapX(ZONE_RIGHT+BALL_R),sT=mapZ(szTop+BALL_R),sB=mapZ(szBot-BALL_R);
   const hasPitch=pitchX!=null&&pitchZ!=null;
   const px=hasPitch?mapX(pitchX):0,pz=hasPitch?mapZ(pitchZ):0;
-  const plateW=17/12/3*W,plateMid=W/2,plateY=mapZ(1.0);
+  const ballR=BALL_R*PX_PER_FT; // ball drawn at true size
+  const plateW=(17/12)*PX_PER_FT,plateMid=mapX(0),plateY=mapZ(zR[0]);
   return(
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block",margin:"0 auto"}}>
       <rect x={sL} y={sT} width={sR-sL} height={sB-sT} fill="none" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4 3"/>
-      <rect x={zL} y={zT} width={zR-zL} height={zB-zT} fill="none" stroke="#d1d5db" strokeWidth="1.5"/>
+      <rect x={zL} y={zT} width={zRt-zL} height={zB-zT} fill="none" stroke="#d1d5db" strokeWidth="1.5"/>
       <polygon points={`${plateMid},${plateY} ${plateMid-plateW/2},${plateY-6} ${plateMid-plateW/2},${plateY-12} ${plateMid+plateW/2},${plateY-12} ${plateMid+plateW/2},${plateY-6}`} fill="#f3f4f6" stroke="#d1d5db" strokeWidth="1"/>
-      {hasPitch&&<circle cx={px} cy={pz} r={7} fill="#dc2626" stroke="#fff" strokeWidth={2}/>}
+      {hasPitch&&<circle cx={px} cy={pz} r={ballR} fill="#dc2626" stroke="#fff" strokeWidth={2}/>}
     </svg>
   );
 }
@@ -978,16 +1000,18 @@ function getREImpact(scenario, userAction) {
 }
 
 // Mini zone SVG for replay reel
-function MiniZone({ pitchX, pitchZ, verdictColor, size = 48 }) {
-  const W = size, H = size * 1.2;
-  const mapX = x => (x + 1.5) / 3 * W;
-  const mapZ = z => H - (z - 1.0) / 3.2 * H;
-  const zL = mapX(ZONE_LEFT), zR = mapX(ZONE_RIGHT), zT = mapZ(ZONE_TOP), zB = mapZ(ZONE_BOT);
+function MiniZone({ pitchX, pitchZ, verdictColor, szTop = ZONE_TOP, szBot = ZONE_BOT, size = 48 }) {
+  const xR = [-1.6, 1.6], zR = [0.7, 4.3];
+  const ppf = size / (xR[1] - xR[0]); // uniform px/ft, width = size
+  const W = size, H = (zR[1] - zR[0]) * ppf;
+  const mapX = x => (x - xR[0]) * ppf;
+  const mapZ = z => H - (z - zR[0]) * ppf;
+  const zL = mapX(ZONE_LEFT), zRt = mapX(ZONE_RIGHT), zT = mapZ(szTop), zB = mapZ(szBot);
   const hasPitch = pitchX != null && pitchZ != null;
   const px = hasPitch ? mapX(pitchX) : 0, pz = hasPitch ? mapZ(pitchZ) : 0;
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
-      <rect x={zL} y={zT} width={zR - zL} height={zB - zT} fill="none" stroke="#d1d5db" strokeWidth="1" />
+      <rect x={zL} y={zT} width={zRt - zL} height={zB - zT} fill="none" stroke="#d1d5db" strokeWidth="1" />
       {hasPitch && <circle cx={px} cy={pz} r={size / 10} fill={verdictColor || "#dc2626"} stroke="#fff" strokeWidth={1} />}
     </svg>
   );
@@ -1052,7 +1076,7 @@ const HISTORICAL_GAMES = [
     pitches: [
       { batter: "Teoscar Hernández", pitcher: "Chris Bassitt", inn: 6, isTop: true, count: "2-1", outs: 0, bases: "110", pitchX: 0.266, pitchZ: 3.401, szTop: 3.38, szBot: 1.62, call: "ball", type: "Sinker", speed: "92 mph", preCount: "1-1", note: "Ump scorecard #1 missed call. Strike called a ball." },
       { batter: "Andrés Giménez", pitcher: "Tyler Glasnow", inn: 6, isTop: false, count: "3-2", outs: 0, bases: "100", pitchX: -0.573, pitchZ: 2.338, szTop: 3.50, szBot: 1.70, call: "strike", type: "Fastball", speed: "96 mph", preCount: "3-1", note: "5 called pitches. Giménez doubles to drive in a run." },
-      { batter: "Max Muncy", pitcher: "Trey Yesavage", inn: 8, isTop: true, count: "0-1", outs: 1, bases: "000", pitchX: 0.234, pitchZ: 3.472, szTop: 3.17, szBot: 1.51, call: "strike", type: "Splitter", speed: "82 mph", preCount: "0-0", note: "Down 2 in the 8th. Called strike 3.7\" outside zone. Muncy homers next." },
+      { batter: "Max Muncy", pitcher: "Trey Yesavage", inn: 8, isTop: true, count: "0-1", outs: 1, bases: "000", pitchX: 0.234, pitchZ: 3.472, szTop: 3.17, szBot: 1.51, call: "strike", type: "Splitter", speed: "82 mph", preCount: "0-0", note: "Down 2 in the 8th. Called strike 2.2\" outside zone. Muncy homers next." },
       { batter: "Davis Schneider", pitcher: "Blake Snell", inn: 8, isTop: false, count: "2-2", outs: 2, bases: "010", pitchX: 0.914, pitchZ: 2.835, szTop: 3.11, szBot: 1.53, call: "strike", type: "Changeup", speed: "82 mph", preCount: "2-1", note: "Ump scorecard #3 missed call. Ball called strike, leads to K." },
       { batter: "Will Smith", pitcher: "Jeff Hoffman", inn: 9, isTop: true, count: "3-2", outs: 2, bases: "000", pitchX: 0.960, pitchZ: 2.130, szTop: 3.33, szBot: 1.57, call: "strike", type: "Fastball", speed: "95 mph", preCount: "3-2", note: "Ump scorecard #2 missed call. 6 called pitches in the AB." },
       { batter: "Teoscar Hernández", pitcher: "Seranthony Domínguez", inn: 10, isTop: true, count: "3-2", outs: 1, bases: "110", pitchX: 1.014, pitchZ: 2.325, szTop: 3.55, szBot: 1.70, call: "ball", type: "Fastball", speed: "99 mph", preCount: "2-2", note: "Extras. Bases loaded walk. Challenge here changes everything." },
@@ -1110,8 +1134,7 @@ const HISTORICAL_GAMES = [
 
 // Build a training scenario from a historical pitch
 function historicalToScenario(pitch, perspective) {
-  const rawConf = getZoneConfidence(pitch.pitchX, pitch.pitchZ);
-  const zoneConf = Math.max(5, Math.min(95, Math.round(rawConf * 100)));
+  const zoneConf = callWrongConfidence(pitch.pitchX, pitch.pitchZ, pitch.szTop, pitch.szBot, perspective);
   const count = pitch.preCount || pitch.count;
   const [b, s] = count.split("-").map(Number);
   const outs = pitch.outs;
@@ -1139,7 +1162,7 @@ function historicalToScenario(pitch, perspective) {
   const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
   const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
   return {
-    count, outs, bases, pitchX: pitch.pitchX, pitchZ: pitch.pitchZ,
+    count, outs, bases, pitchX: pitch.pitchX, pitchZ: pitch.pitchZ, szTop: pitch.szTop, szBot: pitch.szBot,
     zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor,
     // Historical metadata
     batter: pitch.batter, pitcher: pitch.pitcher, inn: pitch.inn,
@@ -1192,8 +1215,8 @@ function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
   // Generate pitch with tightened offsets
   const { pitchX, pitchZ } = generateAdaptivePitch(difficulty, adaptiveMult);
 
-  const rawConf = getZoneConfidence(pitchX, pitchZ);
-  const zoneConf = Math.max(5, Math.min(95, Math.round(rawConf * 100)));
+  // Adaptive pitches are also generated against the default zone.
+  const zoneConf = callWrongConfidence(pitchX, pitchZ, ZONE_TOP, ZONE_BOT, perspective);
   const [b, s] = gs.count.split("-").map(Number);
   const thresh = getTangoThresh(gs.bases, gs.outs, b, s);
   const tier = getTier(thresh);
@@ -1217,7 +1240,7 @@ function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
   const COST = 0.20;
   const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
   const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
-  return { ...gs, pitchX, pitchZ, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, adapted: adaptiveMult !== null };
+  return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, adapted: adaptiveMult !== null };
 }
 
 function generateAdaptivePitch(difficulty, adaptiveMult) {
@@ -1299,8 +1322,7 @@ function TrainingMode(){
           const count=p.preCount||"0-0";
           const outs=p.preOuts!=null?p.preOuts:0;
           const bases=p.preBases||"000";
-          const rawConf=getZoneConfidence(p.pX,p.pZ);
-          const zoneConf=Math.max(5,Math.min(95,Math.round(rawConf*100)));
+          const zoneConf=callWrongConfidence(p.pX,p.pZ,p.szTop,p.szBot,perspective);
           const[b,s]=count.split("-").map(Number);
           const thresh=getTangoThresh(bases,outs,b,s);
           const tier=getTier(thresh);
@@ -1324,7 +1346,7 @@ function TrainingMode(){
           const breakeven=Math.round(COST/(Math.abs(pD)+COST)*100);
           const correctAction=zoneConf>=breakeven?"challenge":"accept";
           return{
-            count,outs,bases,pitchX:p.pX,pitchZ:p.pZ,zoneConf,transition,thresh,tier,deltaRE,pD,breakeven,correctAction,cur,cor,
+            count,outs,bases,pitchX:p.pX,pitchZ:p.pZ,szTop:p.szTop,szBot:p.szBot,zoneConf,transition,thresh,tier,deltaRE,pD,breakeven,correctAction,cur,cor,
             batter:p.batter||null,pitcher:p.pitcher||null,type:p.type||null,speed:p.speed||null,call:p.call,
             inn:p.inning?parseInt(p.inning):null,
           };
@@ -1722,7 +1744,7 @@ function TrainingMode(){
             </div>
             <Diamond bs={scenario.bases} size={42}/>
           </div>
-          <ZoneGraphic pitchX={null} pitchZ={null}/>
+          <ZoneGraphic pitchX={null} pitchZ={null} szTop={scenario.szTop} szBot={scenario.szBot}/>
           <div style={{textAlign:"center",fontSize:13,fontWeight:500,color:"#9ca3af",margin:"12px 0 8px",animation:"pulse 1.5s infinite"}}>
             Pitch incoming…
           </div>
@@ -1754,7 +1776,7 @@ function TrainingMode(){
             </div>
             <Diamond bs={scenario.bases} size={36}/>
           </div>
-          <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+          <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ} szTop={scenario.szTop} szBot={scenario.szBot}/>
         </div>
       </div>
     );
@@ -1782,7 +1804,7 @@ function TrainingMode(){
             <Diamond bs={scenario.bases} size={36}/>
           </div>
           <div style={{position:"relative"}}>
-            <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+            <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ} szTop={scenario.szTop} szBot={scenario.szBot}/>
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
               <div style={{fontSize:40,fontWeight:900,color:callColor,textTransform:"uppercase",letterSpacing:2,textShadow:"0 2px 8px rgba(0,0,0,0.12)",animation:"pulse 0.6s ease-in-out"}}>{callText}</div>
             </div>
@@ -1813,7 +1835,7 @@ function TrainingMode(){
             </div>
             <Diamond bs={scenario.bases} size={36}/>
           </div>
-          <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ}/>
+          <ZoneGraphic pitchX={scenario.pitchX} pitchZ={scenario.pitchZ} szTop={scenario.szTop} szBot={scenario.szBot}/>
           {scenario.batter&&<div style={{textAlign:"center",fontSize:10,color:"#9ca3af",marginTop:4,lineHeight:1.5}}>
             <span style={{fontWeight:600,color:"#6b7280"}}>{scenario.batter}</span> vs <span style={{fontWeight:600,color:"#6b7280"}}>{scenario.pitcher}</span>
             {scenario.type&&<span> · {scenario.type}</span>}{scenario.speed&&<span> {scenario.speed}</span>}
@@ -2016,7 +2038,7 @@ function TrainingMode(){
               return(
                 <div key={i} style={{textAlign:"center",width:52}}>
                   <div style={{border:`1.5px solid ${v.border||"#e5e7eb"}`,borderRadius:6,padding:2,background:v.bg||"#fff"}}>
-                    <MiniZone pitchX={h.pitchX} pitchZ={h.pitchZ} verdictColor={v.color||"#9ca3af"} size={44}/>
+                    <MiniZone pitchX={h.pitchX} pitchZ={h.pitchZ} szTop={h.szTop} szBot={h.szBot} verdictColor={v.color||"#9ca3af"} size={44}/>
                   </div>
                   <div style={{fontSize:10,marginTop:2}}>{v.emoji||"•"}</div>
                   <div style={{fontSize:8,color:"#9ca3af",fontVariantNumeric:"tabular-nums"}}>{h.zoneConf}%</div>
@@ -2314,8 +2336,8 @@ export default function App(){
     return null;
   },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
 
-  // Context-dependent sigma: Hawk-Eye (live/demo) σ=0.25, Trackman (csv/ws) σ=1.0, manual σ=1.0
-  // σ is now derived per-pitch from call type via sigmaForCall (umpire-empirical from MLB 2026).
+  // Context-dependent sigma via sigmaForMode: Hawk-Eye (live/signal/demo) σ=0.25,
+  // Trackman (csv/ws/paste) σ=1.0, manual σ=1.0.
 
   // Use pre-pitch state for challenge analysis when we have pitch data
   const activeCount=activePitch?.preCount||rawCount;
@@ -2907,7 +2929,7 @@ export default function App(){
                   </div>
                 );
                 const dist=getDistFromZone(activePitch.pX,activePitch.pZ,activePitch.szTop,activePitch.szBot);
-                const pOutside=confidenceFromDist(dist,sigmaForCall(activePitch.call));
+                const pOutside=confidenceFromDist(dist,sigmaForMode(mode,trackmanActive));
                 const conf=activePitch.call==="strike"?pOutside:100-pOutside;
                 const challengerPersp=activePitch.call==="strike"?"offense":"defense";
                 const canChallenge=persp===challengerPersp;
@@ -2964,16 +2986,18 @@ export default function App(){
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
+                sigma={sigmaForMode(mode,trackmanActive)}
                 interactive
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)}/>}
               {/* Trackman paste/ws/csv-step zone card */}
               {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
+                sigma={sigmaForMode(mode,trackmanActive)}
                 interactive={trackmanMethod==="paste"}
                 onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
                   const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
@@ -3039,7 +3063,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     const b=row.preBases||tmBases;
     if(!RE[o]?.[b]?.[c])return{...row,idx:i,verdict:"—",conf:null,dRE:null,thresh:null};
     const dist=getDistFromZone(row.pX,row.pZ,row.szTop,row.szBot);
-    const pOutside=confidenceFromDist(dist,sigmaForCall(row.call));
+    const pOutside=confidenceFromDist(dist,SIGMA_TRACKMAN);
     const conf=row.call==="strike"?pOutside:100-pOutside;
     const challengerPersp=row.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
