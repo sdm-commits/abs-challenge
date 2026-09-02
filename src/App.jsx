@@ -63,7 +63,11 @@ const ZONE_HALF=ZONE_WIDTH_FT/2;
 // Zone-confidence σ (inches) by data source. Hawk-Eye / Statcast (live, signal, demo)
 // measures the true location, so confidence runs near-deterministic against the ABS zone;
 // Trackman is close behind; manual placement is a human read, so it stays wide.
-const SIGMA_HAWKEYE  = 0.25; // live / signal / demo — exact optical tracking
+// Measured on 8,252 ABS-resolved 2026 pitches: against the feed's own zone the ruling
+// flips 0.047 in INSIDE the geometric line and is otherwise deterministic (probit
+// sigma 0.002 in). So Hawk-Eye confidence is a near step function at that offset.
+const BOUNDARY_OFFSET_IN = -0.047;
+const SIGMA_HAWKEYE  = 0.05; // live / signal / demo — Statcast coordinates ARE the ABS measurement
 const SIGMA_TRACKMAN = 1.0;  // Trackman CSV / websocket / paste
 const SIGMA_MANUAL   = 1.0;  // hypothetical click placement
 const sigmaForMode = (mode, trackmanActive) =>
@@ -135,7 +139,7 @@ function normCDF(x){
 }
 
 function confidenceFromDist(distInches, sigma = 1.0){
-  return Math.max(0,Math.min(100,Math.round(normCDF(distInches/sigma)*100)));
+  return Math.max(0,Math.min(100,Math.round(normCDF((distInches-BOUNDARY_OFFSET_IN)/sigma)*100)));
 }
 
 // ============================================================
@@ -165,7 +169,8 @@ const EFF_LEFT = ZONE_LEFT - BALL_R;
 const EFF_RIGHT = ZONE_RIGHT + BALL_R;
 const EFF_TOP = ZONE_TOP + BALL_R;
 const EFF_BOT = ZONE_BOT - BALL_R;
-const SIGMA = 0.25 / 12;       // 0.25 inch in feet (Hawk-Eye precision)
+const SIGMA = 0.05 / 12;       // feet; measured, see BOUNDARY_OFFSET_IN
+const BOUNDARY_OFFSET_FT = -0.047 / 12;
 
 function gaussianCdf(x) {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
@@ -185,7 +190,7 @@ function getZoneConfidence(px, pz, szTop = ZONE_TOP, szBot = ZONE_BOT) {
   const d = (dx === 0 && dz === 0)
     ? -(Math.min(ZONE_RIGHT - Math.abs(px), szTop - pz, pz - szBot) + BALL_R)
     : Math.sqrt(dx * dx + dz * dz) - BALL_R;
-  return gaussianCdf(d / SIGMA);
+  return gaussianCdf((d - BOUNDARY_OFFSET_FT) / SIGMA);
 }
 
 // Confidence (5–95%) that the umpire's CALL was wrong, from the challenger's side.
@@ -557,6 +562,7 @@ function useTodaysGames(){
 function useLiveGame(gamePk){
   const[state,setState]=useState(null);
   const[pitch,setPitch]=useState(null);
+  const[feedInfo,setFeedInfo]=useState(null); // challenges left per team, position-player pitching
   const[pitchSequence,setPitchSequence]=useState([]);
   const[lastPlayResult,setLastPlayResult]=useState(null);
   const[recentPlays,setRecentPlays]=useState([]);
@@ -633,8 +639,24 @@ function useLiveGame(gamePk){
           if(!cancelled)setPitchSequence(seq);
         }else if(!cancelled)setPitchSequence([]);
 
-        // Recent completed at-bats (last 8) + last play result
+        // Challenges: every reviewDetails with a challengeTeamId is a challenge; a lost one
+        // (isOverturned false) spends the team's challenge, an overturn keeps it. Event-level
+        // and play-level reviewDetails can both appear; dedupe by play + team.
+        const homeId=fd.gameData?.teams?.home?.id,awayId=fd.gameData?.teams?.away?.id;
         const allPlaysArr=fd.liveData?.plays?.allPlays||[];
+        const lost={[homeId]:0,[awayId]:0},used={[homeId]:0,[awayId]:0};const seen=new Set();
+        allPlaysArr.forEach((p,pi)=>{
+          const rds=[...(p.playEvents||[]).map(e=>e.reviewDetails),p.reviewDetails].filter(rd=>rd&&rd.challengeTeamId&&!rd.inProgress);
+          rds.forEach(rd=>{const key=`${pi}-${rd.challengeTeamId}-${rd.isOverturned}`;if(seen.has(key))return;seen.add(key);
+            used[rd.challengeTeamId]=(used[rd.challengeTeamId]||0)+1;if(!rd.isOverturned)lost[rd.challengeTeamId]=(lost[rd.challengeTeamId]||0)+1});
+        });
+        const inn=fd.liveData?.linescore?.currentInning??1;
+        // Teams start with two. In extras a team with none left gets one more (Tango: "extra
+        // challenges are available in extra innings"); modelled as a floor of one from the 10th.
+        const left=id=>Math.max(inn>=10?1:0,2-(lost[id]||0));
+        const pid=curPlayData?.matchup?.pitcher?.id;const pos=pid?fd.gameData?.players?.[`ID${pid}`]?.primaryPosition?.abbreviation:null;
+        if(!cancelled)setFeedInfo({homeId,awayId,homeLeft:left(homeId),awayLeft:left(awayId),homeLost:lost[homeId]||0,awayLost:lost[awayId]||0,
+          posPlayerPitching:!!pos&&!["P","TWP","SP","RP"].includes(pos),pitcherPos:pos||null});
         const completed=allPlaysArr.filter(p=>p.about?.isComplete&&p.result?.event).slice(-8).reverse().map(p=>({
           batter:p.matchup?.batter?.fullName||"",
           event:p.result?.event||"",
@@ -715,7 +737,7 @@ function useLiveGame(gamePk){
     return()=>{cancelled=true;clearTimeout(lsTimer.current);clearTimeout(pitchTimer.current)};
   },[gamePk]);
 
-  return{state,pitch,pitchSequence,lastPlayResult,recentPlays,err};
+  return{state,pitch,pitchSequence,lastPlayResult,recentPlays,err,feedInfo};
 }
 
 // ============================================================
@@ -840,7 +862,9 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0,
         ):(
           <span style={{fontSize:10,color:"#9ca3af"}}>{interactive?"Click zone to plot pitch":"Pitch Location"}</span>
         )}
-        {hasPitch&&canChallenge?(
+        {hasPitch&&canChallenge&&ctx?.blocked?(
+          <div style={{fontSize:11,fontWeight:800,padding:"2px 10px",borderRadius:5,background:"#fef2f2",color:red}} title={ctx.blocked}>NOT CHALLENGEABLE</div>
+        ):hasPitch&&canChallenge?(
           <div style={{fontSize:11,fontWeight:800,padding:"2px 10px",borderRadius:5,background:shouldChallenge?"#f0fdf4":"#f3f4f6",color:shouldChallenge?green:"#6b7280"}} title={shouldChallenge?"Confidence exceeds threshold":"Confidence below threshold"}>
             {shouldChallenge?"CHALLENGE":"HOLD"}
           </div>
@@ -2293,7 +2317,7 @@ export default function App(){
   const[demoIdx,setDemoIdx]=useState(0);
   const demoPlay=DEMO_PLAYS[demoIdx]||DEMO_PLAYS[0];
   const{games,loading:gamesLoading}=useTodaysGames();
-  const{state:liveState,pitch:livePitch,pitchSequence:livePitchSeq,lastPlayResult:liveLastPlay,recentPlays:liveRecentPlays}=useLiveGame(mode==="live"||mode==="signal"?selectedGame:null);
+  const{state:liveState,pitch:livePitch,pitchSequence:livePitchSeq,lastPlayResult:liveLastPlay,recentPlays:liveRecentPlays,feedInfo:liveFeed}=useLiveGame(mode==="live"||mode==="signal"?selectedGame:null);
   const{stats:playerStats,loading:statsLoading}=usePlayerStats(selectedGame,mode);
   const[showRecentPlays,setShowRecentPlays]=useState(false);
   // Game ticker carousel
@@ -2474,6 +2498,11 @@ export default function App(){
   const activeOuts=activePitch?.preOuts??rawOuts;
   const activeBs=activePitch?.preBases||rawBases;
   const outsRem=outsRemaining(activeInning,activeHalf,activeOuts);
+  // Live: the challenging team's count comes from the feed. Offense = batting team
+  // (away in the top half), defense = fielding team. Elsewhere the toggle applies.
+  const liveChal=(isLive&&!trackmanActive&&liveFeed&&liveState)?((persp==="offense")===!!liveState.isTop?liveFeed.awayLeft:liveFeed.homeLeft):null;
+  const chalLeftEff=liveChal!=null?liveChal:chalLeft;
+  const blocked=(isLive&&!trackmanActive&&liveFeed)?(liveChal===0?"no challenges left":liveFeed.posPlayerPitching?`position player pitching (${liveFeed.pitcherPos})`:null):null;
 
   const liveGames=games.filter(g=>g.status?.abstractGameState==="Live");
   const scheduledGames=games.filter(g=>g.status?.abstractGameState==="Preview");
@@ -2494,9 +2523,9 @@ export default function App(){
       if(tr.terminal){cv=tr.newOuts>=3?0:(RE[tr.newOuts]?.[tr.newBases]?.["0-0"]??null);if(cv==null)return null;cv+=tr.runs;}
       else{cv=RE[o]?.[b]?.[tr.to];if(cv==null)return null;}
       return Math.abs(cv-cur);})();
-    const thresh=swing==null?50:breakEven(swing,outsRem,chalLeft);
+    const thresh=swing==null?50:breakEven(swing,outsRem,chalLeftEff);
     const tier=getTier(thresh);
-    return{cur,thresh,tier,outsRem,chalLeft,swing,results:getTrans(c,o,b).map(t=>{
+    return{cur,thresh,tier,outsRem,chalLeftEff,swing,results:getTrans(c,o,b).map(t=>{
       let cor;
       if(t.terminal){
         if(t.newOuts>=3)cor=0;
@@ -2514,10 +2543,10 @@ export default function App(){
       if(!t.terminal){const[tb,ts]=t.to.split("-").map(Number);toThresh=getTangoThresh(b,o,tb,ts);toTier=getTier(toThresh);}
       else if(t.to==="K"){toThresh=null;toTier=null;} // terminal — no further challenge
       else if(t.to==="BB"){toThresh=null;toTier=null;}
-      const transBE=breakEven(pD,outsRem,chalLeft);
-      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,transBE,outsRem,chalLeft,rel:pD>0,mult:matchup.mult};
+      const transBE=breakEven(pD,outsRem,chalLeftEff);
+      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,transBE,outsRem,chalLeftEff,rel:pD>0,mult:matchup.mult};
     }).filter(Boolean)};
-  },[activeCount,activeOuts,activeBs,persp,matchup,outsRem,chalLeft]);
+  },[activeCount,activeOuts,activeBs,persp,matchup,outsRem,chalLeftEff]);
 
   const toggleBase=useCallback(i=>setBs(p=>{const a=p.split("");a[i]=a[i]==="1"?"0":"1";return a.join("")}),[]);
   const seg=(active)=>({padding:"6px 0",flex:1,borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",textAlign:"center",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"});
@@ -3026,12 +3055,14 @@ export default function App(){
                         {[["top","Top"],["bottom","Bot"]].map(([k,l])=><button key={k} onClick={()=>setHalf(k)} style={seg(half===k)}>{l}</button>)}
                       </div>
                     </>)}
-                    <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Challenges in hand</label>
+                    <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Challenges in hand{liveChal!=null&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:"#2563eb",letterSpacing:.5}}>FROM FEED</span>}</label>
                     <div style={{display:"flex",gap:3}}>
-                      {[2,1].map(nn=><button key={nn} onClick={()=>setChalLeft(nn)} style={seg(chalLeft===nn)}>{nn}</button>)}
+                      {[2,1,0].filter(nn=>nn>0||liveChal===0).map(nn=><button key={nn} onClick={()=>{if(liveChal==null)setChalLeft(nn)}} disabled={liveChal!=null} style={{...seg(chalLeftEff===nn),opacity:liveChal!=null&&chalLeftEff!==nn?0.4:1}}>{nn}</button>)}
                     </div>
+                    {liveFeed&&isLive&&!trackmanActive&&<div style={{marginTop:6,fontSize:9,color:"#6b7280",fontFamily:"'SF Mono',Menlo,monospace"}}>away {liveFeed.awayLeft} left ({liveFeed.awayLost} lost) · home {liveFeed.homeLeft} left ({liveFeed.homeLost} lost){activeInning>=10?" · extras: floor of 1":""}</div>}
+                    {blocked&&<div style={{marginTop:6,fontSize:10,fontWeight:700,color:"#dc2626"}}>Not challengeable: {blocked}</div>}
                     <div style={{marginTop:8,fontSize:9,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>
-                      {outsRem} outs left <span style={{color:"#d1d5db"}}>·</span> cost {chalCost(outsRem,chalLeft).toFixed(3)} R
+                      {outsRem} outs left <span style={{color:"#d1d5db"}}>·</span> cost {chalCost(outsRem,chalLeftEff).toFixed(3)} R
                     </div>
                   </div>
                   {mode==="live"&&!trackmanActive&&!liveState&&selectedGame&&(
@@ -3145,19 +3176,19 @@ export default function App(){
                 thresh={analysis.thresh}
                 persp={persp}
                 sigma={sigmaForMode(mode,trackmanActive)}
-                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand}}
+                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}
                 interactive
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)} ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand}}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)} ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}/>}
               {/* Trackman paste/ws/csv-step zone card */}
               {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
                 sigma={sigmaForMode(mode,trackmanActive)}
-                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand}}
+                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}
                 interactive={trackmanMethod==="paste"}
                 onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
                   const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
