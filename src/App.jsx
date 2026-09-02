@@ -1,4 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import RE_2026_H1 from "./re288_2026_h1.json";
+import ZONE_EV from "./zone_ev_2026.json";
+import { tangoChallengeProb } from "./tangoChalProb.js";
 
 // ============================================================
 // DATA
@@ -9,7 +12,8 @@ const BASES_LIST=[
   {label:"1B 2B",key:"110",desc:"1st & 2nd"},{label:"3B",key:"001",desc:"3rd"},{label:"1B 3B",key:"101",desc:"1st & 3rd"},
   {label:"2B 3B",key:"011",desc:"2nd & 3rd"},{label:"1B 2B 3B",key:"111",desc:"Loaded"},
 ];
-const RE={0:{"000":{"0-2":0.42,"1-2":0.44,"0-1":0.47,"2-2":0.48,"1-1":0.50,"0-0":0.51,"1-0":0.55,"2-1":0.55,"3-2":0.59,"2-0":0.61,"3-1":0.67,"3-0":0.74},"100":{"0-2":0.76,"1-2":0.80,"0-1":0.84,"2-2":0.87,"1-1":0.89,"0-0":0.90,"1-0":0.96,"2-1":0.98,"3-2":1.03,"2-0":1.07,"3-1":1.15,"3-0":1.25},"010":{"0-2":0.99,"1-2":1.03,"0-1":1.10,"2-2":1.09,"1-1":1.13,"0-0":1.15,"1-0":1.20,"2-1":1.20,"3-2":1.18,"2-0":1.25,"3-1":1.30,"3-0":1.38},"110":{"0-2":1.31,"1-2":1.34,"0-1":1.41,"2-2":1.41,"1-1":1.47,"0-0":1.50,"1-0":1.58,"2-1":1.57,"3-2":1.64,"2-0":1.74,"3-1":1.83,"3-0":1.98},"001":{"0-2":1.23,"1-2":1.26,"0-1":1.33,"2-2":1.34,"1-1":1.37,"0-0":1.38,"1-0":1.44,"2-1":1.41,"3-2":1.43,"2-0":1.48,"3-1":1.52,"3-0":1.60},"101":{"0-2":1.56,"1-2":1.60,"0-1":1.68,"2-2":1.67,"1-1":1.74,"0-0":1.78,"1-0":1.85,"2-1":1.82,"3-2":1.86,"2-0":1.91,"3-1":1.98,"3-0":2.08},"011":{"0-2":1.77,"1-2":1.81,"0-1":1.91,"2-2":1.85,"1-1":1.95,"0-0":1.98,"1-0":2.03,"2-1":1.99,"3-2":1.97,"2-0":2.09,"3-1":2.11,"3-0":2.19},"111":{"0-2":2.08,"1-2":2.09,"0-1":2.21,"2-2":2.26,"1-1":2.27,"0-0":2.32,"1-0":2.40,"2-1":2.46,"3-2":2.59,"2-0":2.52,"3-1":2.63,"3-0":2.89}},1:{"000":{"0-2":0.21,"1-2":0.22,"0-1":0.24,"2-2":0.25,"1-1":0.26,"0-0":0.27,"1-0":0.30,"2-1":0.30,"3-2":0.32,"2-0":0.35,"3-1":0.38,"3-0":0.43},"100":{"0-2":0.41,"1-2":0.43,"0-1":0.48,"2-2":0.49,"1-1":0.51,"0-0":0.53,"1-0":0.57,"2-1":0.57,"3-2":0.60,"2-0":0.64,"3-1":0.69,"3-0":0.77},"010":{"0-2":0.55,"1-2":0.58,"0-1":0.63,"2-2":0.63,"1-1":0.67,"0-0":0.69,"1-0":0.73,"2-1":0.72,"3-2":0.71,"2-0":0.79,"3-1":0.79,"3-0":0.85},"110":{"0-2":0.76,"1-2":0.80,"0-1":0.86,"2-2":0.86,"1-1":0.91,"0-0":0.93,"1-0":1.00,"2-1":1.00,"3-2":1.06,"2-0":1.10,"3-1":1.21,"3-0":1.33},"001":{"0-2":0.77,"1-2":0.80,"0-1":0.90,"2-2":0.86,"1-1":0.93,"0-0":0.97,"1-0":1.00,"2-1":0.99,"3-2":0.95,"2-0":1.05,"3-1":1.06,"3-0":1.13},"101":{"0-2":0.98,"1-2":1.03,"0-1":1.13,"2-2":1.09,"1-1":1.21,"0-0":1.21,"1-0":1.24,"2-1":1.25,"3-2":1.24,"2-0":1.33,"3-1":1.36,"3-0":1.44},"011":{"0-2":1.10,"1-2":1.17,"0-1":1.28,"2-2":1.22,"1-1":1.32,"0-0":1.37,"1-0":1.42,"2-1":1.39,"3-2":1.33,"2-0":1.48,"3-1":1.48,"3-0":1.54},"111":{"0-2":1.27,"1-2":1.34,"0-1":1.43,"2-2":1.46,"1-1":1.53,"0-0":1.57,"1-0":1.68,"2-1":1.68,"3-2":1.78,"2-0":1.82,"3-1":1.91,"3-0":2.15}},2:{"000":{"0-2":0.06,"1-2":0.07,"0-1":0.09,"2-2":0.09,"1-1":0.10,"0-0":0.10,"1-0":0.12,"2-1":0.12,"3-2":0.12,"2-0":0.14,"3-1":0.16,"3-0":0.18},"100":{"0-2":0.14,"1-2":0.16,"0-1":0.19,"2-2":0.18,"1-1":0.21,"0-0":0.23,"1-0":0.26,"2-1":0.24,"3-2":0.25,"2-0":0.30,"3-1":0.32,"3-0":0.37},"010":{"0-2":0.19,"1-2":0.22,"0-1":0.27,"2-2":0.27,"1-1":0.31,"0-0":0.32,"1-0":0.35,"2-1":0.34,"3-2":0.32,"2-0":0.38,"3-1":0.39,"3-0":0.43},"110":{"0-2":0.23,"1-2":0.26,"0-1":0.32,"2-2":0.31,"1-1":0.34,"0-0":0.36,"1-0":0.39,"2-1":0.38,"3-2":0.37,"2-0":0.43,"3-1":0.45,"3-0":0.49},"001":{"0-2":0.31,"1-2":0.32,"0-1":0.44,"2-2":0.44,"1-1":0.47,"0-0":0.50,"1-0":0.55,"2-1":0.54,"3-2":0.54,"2-0":0.63,"3-1":0.67,"3-0":0.73},"101":{"0-2":0.35,"1-2":0.39,"0-1":0.48,"2-2":0.44,"1-1":0.53,"0-0":0.57,"1-0":0.62,"2-1":0.57,"3-2":0.54,"2-0":0.68,"3-1":0.69,"3-0":0.75},"011":{"0-2":0.41,"1-2":0.44,"0-1":0.49,"2-2":0.44,"1-1":0.51,"0-0":0.53,"1-0":0.57,"2-1":0.57,"3-2":0.60,"2-0":0.64,"3-1":0.69,"3-0":0.77},"111":{"0-2":0.46,"1-2":0.54,"0-1":0.62,"2-2":0.67,"1-1":0.74,"0-0":0.76,"1-0":0.90,"2-1":0.89,"3-2":0.92,"2-0":1.05,"3-1":1.18,"3-0":1.38}}};
+// RE288, 2026 regular season through 7/12 (first half); cells under 300 pitches shrunk toward the 2024-26 shape.
+const RE=RE_2026_H1;
 
 // Walk base-state transitions: batter to 1st, forced runners advance
 const WALK_MAP={"000":"100","100":"110","010":"110","110":"111","001":"101","101":"111","011":"111","111":"111"};
@@ -26,6 +30,24 @@ function getTrans(c,outs,bases){
   else if(b===3)t.push({type:"s2b",label:"Strike → Walk",from:c,to:"BB",desc:"Overturned to ball → BB",terminal:true,newOuts:outs,newBases:WALK_MAP[bases]||"100",newCount:"0-0",runs:WALK_RUNS[bases]||0});
   return t;
 }
+
+// Challenge cost model (Tango, refit on 2026 MLB).
+// https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league
+// A lost challenge does not cost a run — it costs the option value of the challenges you
+// can no longer make, which decays as the game shortens. ~0.001 R per remaining out while
+// holding two, ~0.003 while holding the last one. Replaced a flat COST=0.20 that carried no
+// outs term and ran ~4x too high at first pitch, ~20x too high by the 8th.
+const COST_PER_OUT={2:0.001,1:0.003};
+const DEFAULT_CHAL_LEFT=2;
+// Outs left in the game for BOTH teams — 54-out scale.
+const outsRemaining=(inn,half,outs)=>Math.max(1,(9-(inn||1))*6+(half==="top"?3:0)+(3-(outs||0)));
+const chalCost=(outsRem,chalLeft)=>COST_PER_OUT[Math.max(1,Math.min(2,chalLeft||DEFAULT_CHAL_LEFT))]*outsRem;
+// Minimum confidence that makes the challenge +EV.
+const breakEven=(swing,outsRem,chalLeft)=>{
+  const C=chalCost(outsRem,chalLeft);
+  return Math.round(C/(Math.abs(swing)+C)*100);
+};
+const halfOf=(v)=>String(v??"top").toLowerCase().startsWith("b")||v===false?"bottom":"top";
 const fmt=v=>v==null?"—":v.toFixed(3);
 function heatColor(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));if(t<.5){const s=t/.5;return`rgb(${Math.round(33+(255-33)*s)},${Math.round(102+(255-102)*s)},${Math.round(172+(255-172)*s)})`}const s=(t-.5)/.5;return`rgb(${Math.round(255-(255-214)*s)},${Math.round(255-(255-48)*s)},${Math.round(255-(255-49)*s)})`}
 function heatText(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));return(t<.2||t>.8)?"#fff":"#333"}
@@ -48,12 +70,61 @@ const sigmaForMode = (mode, trackmanActive) =>
   trackmanActive ? SIGMA_TRACKMAN : mode === "manual" ? SIGMA_MANUAL : SIGMA_HAWKEYE;
 
 function getDistFromZone(pX,pZ,szTop,szBot){
-  const xDist=Math.abs(pX)-ZONE_HALF;
-  const zDistHigh=pZ-(szTop+BALL_RADIUS_FT);
-  const zDistLow=(szBot-BALL_RADIUS_FT)-pZ;
-  const xIn=xDist<0,zIn=zDistHigh<0&&zDistLow<0;
-  if(xIn&&zIn)return -Math.min(Math.abs(xDist),Math.abs(zDistHigh),Math.abs(zDistLow))*12;
-  return Math.sqrt(Math.max(0,xDist)**2+Math.max(0,zDistHigh,zDistLow)**2)*12;
+  // Signed distance (inches) from the ball's CENTER to the strike/ball boundary.
+  // ABS rule: the ball is a circle in the single pane at the middle of the plate and
+  // it is a strike when that circle touches the rulebook rectangle, i.e. when the
+  // center is within one ball radius of the rectangle. That boundary has ROUNDED
+  // corners. The old test grew the rectangle by a radius in x and z separately
+  // (square corners) and called a ball diagonally off a corner a strike; on 25
+  // ABS-resolved corner pitches in 2026, ABS ruled ball on 22.
+  const PH=17/24;
+  const dx=Math.max(0,Math.abs(pX)-PH);
+  const dz=Math.max(0,pZ-szTop,szBot-pZ);
+  if(dx===0&&dz===0){
+    return -(Math.min(PH-Math.abs(pX),szTop-pZ,pZ-szBot)+BALL_RADIUS_FT)*12;
+  }
+  return (Math.sqrt(dx*dx+dz*dz)-BALL_RADIUS_FT)*12;
+}
+
+// Attack zone of a pitch, batter-relative when handedness is known (inside = toward
+// the batter). x normalised to plate half-width, z to zone half-height: heart <= 0.67,
+// shadow ring to 1.33, beyond = off. Mirrors analysis/q35 in the ABS App repo.
+function attackZone(pX,pZ,szTop,szBot,stand){
+  const mid=(szTop+szBot)/2,hh=(szTop-szBot)/2||1;
+  let xn=pX/(17/24); if(stand==="L")xn=-xn;
+  const zn=(pZ-mid)/hh;
+  const band=v=>Math.abs(v)<=0.67?0:Math.abs(v)<=1.33?1:2;
+  const bx=band(xn),bz=band(zn);
+  const horiz=stand?(xn>0?"Outside":"Inside"):"Side";
+  if(bx===2)return"Off-"+horiz;
+  if(bz===2)return"Off-"+(zn>0?"Top":"Bottom");
+  if(bx===0&&bz===0)return"Heart";
+  if(bx===0)return zn>0?"Top":"Bottom";
+  if(bz===0)return horiz;
+  return horiz+"-"+(zn>0?"Top":"Bottom");
+}
+
+// Savant "Reasonable Pitch": a challenge opportunity that (1) looks like an umpire
+// miss, or (2) was within 3 in. of the edge with an RE288 stake of at least 0.30 R,
+// or (3) carries a challenge probability of at least 20% under the Savant-calibrated
+// model. Returns the flag, the reasons, and the challenge probability.
+function reasonablePitch({pitch,dist,stake,outsRem,chalLeft,bases,balls,strikes}){
+  if(!pitch||dist==null)return null;
+  const side=pitch.call==="strike"?"offense":"defense";
+  const looksMissed=pitch.call==="strike"?dist>0:dist<0;
+  const closeValuable=Math.abs(dist)<=3&&stake!=null&&stake>=0.30;
+  let pChal=null;
+  try{
+    pChal=tangoChallengeProb({side,plateX:pitch.pX,plateZ:pitch.pZ,szTop:pitch.szTop,szBot:pitch.szBot,
+      balls:Math.min(4,balls+(pitch.call==="ball"?1:0)),strikes:Math.min(3,strikes+(pitch.call==="strike"?1:0)),
+      outsRem,priorLost:Math.max(0,2-(chalLeft||2)),basesCode:bases});
+  }catch(e){pChal=null;}
+  const others=pChal!=null&&pChal>=0.20;
+  const reasons=[];
+  if(looksMissed)reasons.push("looks missed");
+  if(closeValuable)reasons.push(`close, ${stake.toFixed(2)} R`);
+  if(others)reasons.push(`${Math.round(pChal*100)}% fire it`);
+  return{reasonable:looksMissed||closeValuable||others,reasons,pChal,side};
 }
 
 function normCDF(x){
@@ -64,7 +135,7 @@ function normCDF(x){
 }
 
 function confidenceFromDist(distInches, sigma = 1.0){
-  return Math.max(5,Math.min(95,Math.round(normCDF(distInches/sigma)*100)));
+  return Math.max(0,Math.min(100,Math.round(normCDF(distInches/sigma)*100)));
 }
 
 // ============================================================
@@ -104,19 +175,17 @@ function gaussianCdf(x) {
 }
 
 function getZoneConfidence(px, pz, szTop = ZONE_TOP, szBot = ZONE_BOT) {
-  // P(pitch is outside the zone / a ball). Horizontal edges are fixed (17" plate),
-  // but the vertical edges come from this batter's strike zone — pass szTop/szBot so
-  // historical and Trackman pitches are judged against the real (not default) zone.
-  const effTop = szTop + BALL_R, effBot = szBot - BALL_R;
-  const isOutside = px < EFF_LEFT || px > EFF_RIGHT || pz < effBot || pz > effTop;
-  if (isOutside) {
-    const dx = Math.max(EFF_LEFT - px, px - EFF_RIGHT, 0);
-    const dz = Math.max(effBot - pz, pz - effTop, 0);
-    return gaussianCdf(Math.max(dx, dz) / SIGMA);
-  }
-  const dxIn = Math.min(px - EFF_LEFT, EFF_RIGHT - px);
-  const dzIn = Math.min(pz - effBot, effTop - pz);
-  return 1 - gaussianCdf(Math.min(dxIn, dzIn) / SIGMA);
+  // P(pitch is a ball). The strike/ball boundary is the rulebook rectangle grown by one
+  // ball radius with ROUNDED corners (the ball is a circle in the ABS pane). Signed
+  // distance from the ball center to that boundary, positive = outside, through a
+  // Gaussian at Hawk-Eye precision. The old test grew the rectangle with square corners
+  // and mis-scored diagonal corner pitches.
+  const dx = Math.max(0, Math.abs(px) - ZONE_RIGHT);
+  const dz = Math.max(0, pz - szTop, szBot - pz);
+  const d = (dx === 0 && dz === 0)
+    ? -(Math.min(ZONE_RIGHT - Math.abs(px), szTop - pz, pz - szBot) + BALL_R)
+    : Math.sqrt(dx * dx + dz * dz) - BALL_R;
+  return gaussianCdf(d / SIGMA);
 }
 
 // Confidence (5–95%) that the umpire's CALL was wrong, from the challenger's side.
@@ -125,7 +194,9 @@ function getZoneConfidence(px, pz, szTop = ZONE_TOP, szBot = ZONE_BOT) {
 function callWrongConfidence(px, pz, szTop, szBot, perspective) {
   const pBall = getZoneConfidence(px, pz, szTop, szBot);
   const pWrong = perspective === "batter" ? pBall : 1 - pBall;
-  return Math.max(5, Math.min(95, Math.round(pWrong * 100)));
+  // No artificial floor: with outs-aware cost the break-even can sit at 2-4% late in a
+  // game, and a 5% floor made every pitch "clear" it. 0 means the call was not close.
+  return Math.max(0, Math.min(100, Math.round(pWrong * 100)));
 }
 
 // ============================================================
@@ -210,8 +281,15 @@ function pickGameState(difficulty) {
   return { count, bases, outs };
 }
 
+// Outs remaining moves the threshold further than the count does, so training has to vary
+// it. Pool states that already carry an inning keep their own.
+function withGameClock(gs) {
+  return { inn: 1 + Math.floor(Math.random() * 9), isTop: Math.random() < 0.5,
+           chalLeft: Math.random() < 0.75 ? 2 : 1, ...gs };
+}
+
 function generateScenario(difficulty, perspective) {
-  const gs = pickGameState(difficulty);
+  const gs = withGameClock(pickGameState(difficulty));
   const { pitchX, pitchZ } = generatePitchLocation(difficulty);
   // Random pitches are generated against the default zone, so szTop/szBot are the defaults.
   const zoneConf = callWrongConfidence(pitchX, pitchZ, ZONE_TOP, ZONE_BOT, perspective);
@@ -237,10 +315,9 @@ function generateScenario(difficulty, perspective) {
   // Perspective-adjusted delta (no matchup in training, mult=1)
   const pD = perspective === "batter" ? deltaRE : -deltaRE;
   // Break-even: the actual confidence % needed to justify this challenge
-  const COST = 0.20;
-  const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
-  const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
-  return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor };
+  const breakeven = breakEven(pD, outsRemaining(gs.inn, halfOf(gs.isTop), gs.outs), gs.chalLeft);
+  const correctAction = zoneConf > 0 && zoneConf >= breakeven ? "challenge" : "accept";
+  return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, stand: Math.random() < 0.6 ? "R" : "L" };
 }
 
 // ============================================================
@@ -287,7 +364,7 @@ function ChallengeContext({analysis,activeCount,persp}){
           {batterCard?(<>
             <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn strike</div>
             <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{batterCard.from} → {batterCard.to}</div>
-            {batterIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Tango: {thresh}%</div>}
+            {batterIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Need {thresh}%</div>}
           </>):(
             <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No strikes to overturn</div>
           )}
@@ -297,7 +374,7 @@ function ChallengeContext({analysis,activeCount,persp}){
           {catcherCard?(<>
             <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn ball</div>
             <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{catcherCard.from} → {catcherCard.to}</div>
-            {catcherIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Tango: {thresh}%</div>}
+            {catcherIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Need {thresh}%</div>}
           </>):(
             <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No balls to overturn</div>
           )}
@@ -625,6 +702,7 @@ function useLiveGame(gamePk){
               type:calledPitch.details?.type?.description||calledPitch.details?.type?.code||"",
               speed:calledPitch.pitchData?.startSpeed?`${Math.round(calledPitch.pitchData.startSpeed)} mph`:"",
               preCount,preOuts,preBases,result,
+              stand:curPlay?.matchup?.batSide?.code||null,
             });
           }
         }
@@ -647,7 +725,7 @@ const HEADSHOT="https://content.mlb.com/images/headshots/current/60x60/";
 const lastName=n=>{if(!n)return"";const p=n.split(" ");if(p.length<=1)return n;const last=p[p.length-1];if(["Jr.","Sr.","II","III","IV"].includes(last))return p[p.length-2]+" "+last;return last;};
 // 2025 season xwOBA from Baseball Savant (baseballsavant.mlb.com)
 // Pitchers: xwOBA-against (lower = better). Batters: xwOBA (higher = better).
-const DEMO_STATS={571970:{xwoba:.374,type:"batter",name:"Max Muncy"},605135:{xwoba:.310,type:"pitcher",name:"Chris Bassitt"},605483:{xwoba:.283,type:"pitcher",name:"Blake Snell"},606192:{xwoba:.323,type:"batter",name:"Teoscar Hernández"},607192:{xwoba:.285,type:"pitcher",name:"Tyler Glasnow"},622554:{xwoba:.290,type:"pitcher",name:"Seranthony Domínguez"},656546:{xwoba:.285,type:"pitcher",name:"Jeff Hoffman"},660271:{xwoba:.250,type:"pitcher",name:"Shohei Ohtani"},665489:{xwoba:.384,type:"batter",name:"Vladimir Guerrero Jr."},665926:{xwoba:.308,type:"batter",name:"Andrés Giménez"},666182:{xwoba:.353,type:"batter",name:"Bo Bichette"},669257:{xwoba:.378,type:"batter",name:"Will Smith"},669456:{xwoba:.310,type:"pitcher",name:"Shane Bieber"},676914:{xwoba:.323,type:"batter",name:"Davis Schneider"},702056:{xwoba:.295,type:"pitcher",name:"Trey Yesavage"},808967:{xwoba:.259,type:"pitcher",name:"Yoshinobu Yamamoto"}};
+const DEMO_STATS={571970:{xwoba:.374,type:"batter",name:"Max Muncy",bats:"L"},605135:{xwoba:.310,type:"pitcher",name:"Chris Bassitt"},605483:{xwoba:.283,type:"pitcher",name:"Blake Snell"},606192:{xwoba:.323,type:"batter",name:"Teoscar Hernández",bats:"R"},607192:{xwoba:.285,type:"pitcher",name:"Tyler Glasnow"},622554:{xwoba:.290,type:"pitcher",name:"Seranthony Domínguez"},656546:{xwoba:.285,type:"pitcher",name:"Jeff Hoffman"},660271:{xwoba:.250,type:"pitcher",name:"Shohei Ohtani"},665489:{xwoba:.384,type:"batter",name:"Vladimir Guerrero Jr.",bats:"R"},665926:{xwoba:.308,type:"batter",name:"Andrés Giménez",bats:"L"},666182:{xwoba:.353,type:"batter",name:"Bo Bichette",bats:"R"},669257:{xwoba:.378,type:"batter",name:"Will Smith",bats:"R"},669456:{xwoba:.310,type:"pitcher",name:"Shane Bieber"},676914:{xwoba:.323,type:"batter",name:"Davis Schneider",bats:"R"},702056:{xwoba:.295,type:"pitcher",name:"Trey Yesavage"},808967:{xwoba:.259,type:"pitcher",name:"Yoshinobu Yamamoto"}};
 const DEMO_PLAYS=[
   {label:"Hernández vs Bassitt",sub:"Top 6 · 0 out · 1st & 2nd · LAD 1, TOR 3",note:"Ump scorecard's #1 most impactful missed call. Strike called a ball on a 1-1 count — runners on 1st and 2nd with nobody out.",count:"2-1",outs:0,bases:"110",inn:6,isTop:true,away:1,home:3,batterId:606192,pitcherId:605135,batter:"Teoscar Hernández",pitcher:"Chris Bassitt",result:"Forceout",
     pitch:{pX:0.266,pZ:3.401,szTop:3.38,szBot:1.62,call:"ball",type:"Sinker",speed:"92.1 mph",preCount:"1-1"}},
@@ -723,7 +801,7 @@ function CompactZone({pX,pZ,szTop,szBot,call,onClickZone,interactive}){
   );
 }
 
-function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0}){
+function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0,ctx}){
   const green="#16a34a",red="#dc2626";
   const zone=useMemo(()=>{
     if(!pitch)return null;
@@ -732,14 +810,23 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0}
     const pOutside=confidenceFromDist(dist,sigma);
     const pInside=100-pOutside;
     const conf=pitch.call==="strike"?pOutside:pInside;
-    const shouldChallenge=conf>=thresh;
+    const shouldChallenge=conf>0&&conf>=thresh;
     const challengerPersp=pitch.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
-    return{dist,inside,conf,shouldChallenge,canChallenge};
-  },[pitch,thresh,persp,sigma]);
+    let reasonable=null,zoneCtx=null;
+    if(ctx){
+      const stake=ctx.stake==null?null:Math.abs(ctx.stake);
+      const[b,st]=(ctx.count||"0-0").split("-").map(Number);
+      reasonable=reasonablePitch({pitch,dist,stake,outsRem:ctx.outsRem,chalLeft:ctx.chalLeft,bases:ctx.bases,balls:b,strikes:st});
+      const label=attackZone(pitch.pX,pitch.pZ,pitch.szTop,pitch.szBot,ctx.stand||null);
+      const row=ZONE_EV[challengerPersp]?.[label];
+      zoneCtx=row?{label,...row}:{label};
+    }
+    return{dist,inside,conf,shouldChallenge,canChallenge,reasonable,zoneCtx};
+  },[pitch,thresh,persp,sigma,ctx]);
 
   const hasPitch=!!pitch;
-  const{dist,inside,conf,shouldChallenge,canChallenge}=zone||{};
+  const{dist,inside,conf,shouldChallenge,canChallenge,reasonable,zoneCtx}=zone||{};
 
   return(
     <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,marginBottom:10,overflow:"hidden",opacity:hasPitch&&!canChallenge?0.5:1}}>
@@ -775,6 +862,14 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0}
                 <div style={{height:4,borderRadius:2,background:"#e5e7eb",position:"relative",overflow:"hidden"}}><div style={{height:"100%",borderRadius:2,width:`${Math.min(conf,100)}%`,background:shouldChallenge?green:"#9ca3af",transition:"width .3s ease"}}/></div>
                 <div style={{position:"relative",height:8,marginTop:-6}}><div style={{position:"absolute",left:`${thresh}%`,transform:"translateX(-50%)",width:1.5,height:8,background:"#374151",borderRadius:1}}/></div>
               </div>
+              {reasonable&&<div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}} title="Savant 'reasonable pitch': looks missed, or close and worth 0.30 R, or challenged 20%+ of the time">
+                <span style={{fontSize:9,fontWeight:700,letterSpacing:0.5,padding:"1px 6px",borderRadius:4,border:`1px solid ${reasonable.reasonable?"#bfdbfe":"#e5e7eb"}`,background:reasonable.reasonable?"#eff6ff":"#f9fafb",color:reasonable.reasonable?"#2563eb":"#9ca3af"}}>{reasonable.reasonable?"REASONABLE":"NOT REASONABLE"}</span>
+                <span style={{fontSize:9,color:"#6b7280"}}>{reasonable.reasons.length?reasonable.reasons.join(" · "):reasonable.pChal!=null?`${Math.round(reasonable.pChal*100)}% fire it`:""}</span>
+              </div>}
+              {zoneCtx&&<div style={{marginTop:6,fontSize:9,color:"#6b7280",lineHeight:1.5}} title="League 2026 fires in this attack zone from this side: overturn rate and expected runs per fire after Tango's lost-challenge cost">
+                <span style={{fontWeight:700,color:"#374151"}}>{zoneCtx.label}</span>
+                {zoneCtx.n?<>{" · "}<span style={{fontFamily:"'SF Mono',ui-monospace,monospace"}}>{zoneCtx.n}</span> fires · OT <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zoneCtx.ot>=0.5?"#16a34a":"#dc2626"}}>{Math.round(zoneCtx.ot*100)}%</span> · EV <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zoneCtx.ev>=0?"#16a34a":"#dc2626"}}>{zoneCtx.ev>=0?"+":""}{zoneCtx.ev.toFixed(3)}</span> R/fire</>:<span style={{color:"#9ca3af"}}> · no league fires here</span>}
+              </div>}
               {interactive&&<button onClick={onClear} style={{marginTop:6,background:"none",border:"none",cursor:"pointer",fontSize:9,color:"#d1d5db",fontFamily:"inherit",padding:0}}>Clear</button>}
             </div>
           ):hasPitch&&!canChallenge?(
@@ -972,7 +1067,6 @@ function getBothTransitions(scenario) {
     }
     if (cor == null) continue;
     const dRE = cor - cur;
-    const COST = 0.20;
     const pD_batter = dRE;
     const pD_catcher = -dRE;
     results.push({ ...t, dRE, cor, batterSwing: Math.abs(pD_batter), catcherSwing: Math.abs(pD_catcher) });
@@ -984,11 +1078,11 @@ function getBothTransitions(scenario) {
 // and what you should have done. Positive = you did better than or equal to optimal.
 // The baseline is the WRONG action's EV, so correct decisions always show >= 0.
 function getREImpact(scenario, userAction) {
-  const COST = 0.20;
+  const cost = chalCost(outsRemaining(scenario.inn, halfOf(scenario.isTop), scenario.outs), scenario.chalLeft);
   const swing = Math.abs(scenario.pD);
   const conf = scenario.zoneConf / 100;
-  // EV of challenging: expected overturn value minus challenge cost
-  const evChallenge = swing * conf - COST;
+  // You only pay the cost when the challenge fails, so it is weighted by (1 - conf).
+  const evChallenge = swing * conf - (1 - conf) * cost;
   // EV of accepting: 0 (no cost, no gain)
   const evAccept = 0;
 
@@ -997,6 +1091,12 @@ function getREImpact(scenario, userAction) {
 
   // How much better/worse you did vs optimal
   return myEV - optimalEV;
+}
+// EV of the decision the player actually made (what a season of these decisions banks).
+function getMyEV(scenario, userAction) {
+  if (userAction !== "challenge") return 0;
+  const cost = chalCost(outsRemaining(scenario.inn, halfOf(scenario.isTop), scenario.outs), scenario.chalLeft);
+  return Math.abs(scenario.pD) * (scenario.zoneConf / 100) - (1 - scenario.zoneConf / 100) * cost;
 }
 
 // Mini zone SVG for replay reel
@@ -1067,6 +1167,8 @@ function getVerdict(userAction, scenario) {
 // ============================================================
 // HISTORICAL GAME LIBRARY — real Statcast data for training
 // ============================================================
+// Batter side for the historical pitches (switch hitters left null; side depends on the pitcher).
+const HIST_BATS = {"Will Smith":"R","Teoscar Hernández":"R","Jose Altuve":"R","Yordan Alvarez":"L","Vladimir Guerrero Jr.":"R","Tony Kemp":"L","Tim Anderson":"R","Shea Langeliers":"R","Seth Brown":"L","Ryan Noda":"L","Owen Miller":"R","Max Muncy":"L","Matt Vierling":"R","Kerry Carpenter":"L","José Ramírez":null,"José Abreu":"R","Josh Naylor":"L","Jace Peterson":"L","Franmil Reyes":"R","Esteury Ruiz":"R","Ernie Clement":"R","Davis Schneider":"R","Carlos Pérez":"R","Andrés Giménez":"L","Alex Bregman":"R","Aledmys Díaz":"R","AJ Pollock":"R"};
 const HISTORICAL_GAMES = [
   {
     id: "ws2025g7",
@@ -1158,15 +1260,15 @@ function historicalToScenario(pitch, perspective) {
   }
   const deltaRE = cor - cur;
   const pD = perspective === "batter" ? deltaRE : -deltaRE;
-  const COST = 0.20;
-  const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
-  const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
+  const breakeven = breakEven(pD, outsRemaining(pitch.inn, halfOf(pitch.isTop), outs), DEFAULT_CHAL_LEFT);
+  const correctAction = zoneConf > 0 && zoneConf >= breakeven ? "challenge" : "accept";
   return {
     count, outs, bases, pitchX: pitch.pitchX, pitchZ: pitch.pitchZ, szTop: pitch.szTop, szBot: pitch.szBot,
     zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor,
     // Historical metadata
-    batter: pitch.batter, pitcher: pitch.pitcher, inn: pitch.inn,
+    batter: pitch.batter, pitcher: pitch.pitcher, inn: pitch.inn, isTop: pitch.isTop,
     type: pitch.type, speed: pitch.speed, call: pitch.call, note: pitch.note,
+    stand: HIST_BATS[pitch.batter] || null,
   };
 }
 
@@ -1237,10 +1339,9 @@ function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
   }
   const deltaRE = cor - cur;
   const pD = perspective === "batter" ? deltaRE : -deltaRE;
-  const COST = 0.20;
-  const breakeven = Math.round(COST / (Math.abs(pD) + COST) * 100);
-  const correctAction = zoneConf >= breakeven ? "challenge" : "accept";
-  return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, adapted: adaptiveMult !== null };
+  const breakeven = breakEven(pD, outsRemaining(gs.inn, halfOf(gs.isTop), gs.outs), gs.chalLeft);
+  const correctAction = zoneConf > 0 && zoneConf >= breakeven ? "challenge" : "accept";
+  return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, adapted: adaptiveMult !== null, stand: Math.random() < 0.6 ? "R" : "L" };
 }
 
 function generateAdaptivePitch(difficulty, adaptiveMult) {
@@ -1293,7 +1394,7 @@ function TrainingMode(){
   const[timeLeft,setTimeLeft]=useState(2000);
   const[userAction,setUserAction]=useState(null);
   const[cardIndex,setCardIndex]=useState(0);
-  const[stats,setStats]=useState({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,reLedger:0,history:[]});
+  const[stats,setStats]=useState({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,reLedger:0,evBanked:0,history:[]});
   const[challengeMode,setChallengeMode]=useState("unlimited"); // "unlimited" | "2" | "1"
   const[challengesLeft,setChallengesLeft]=useState(null); // null = unlimited
   const[previewDuration,setPreviewDuration]=useState(5);
@@ -1342,8 +1443,7 @@ function TrainingMode(){
           }
           const deltaRE=cor-cur;
           const pD=perspective==="batter"?deltaRE:-deltaRE;
-          const COST=0.20;
-          const breakeven=Math.round(COST/(Math.abs(pD)+COST)*100);
+          const breakeven=breakEven(pD,outsRemaining(Number(p.inning)||1,halfOf(p.half),outs),DEFAULT_CHAL_LEFT);
           const correctAction=zoneConf>=breakeven?"challenge":"accept";
           return{
             count,outs,bases,pitchX:p.pX,pitchZ:p.pZ,szTop:p.szTop,szBot:p.szBot,zoneConf,transition,thresh,tier,deltaRE,pD,breakeven,correctAction,cur,cor,
@@ -1446,7 +1546,7 @@ function TrainingMode(){
   },[trainingSource,difficulty,perspective,historicalQueue]);
 
   const startRound=useCallback(()=>{
-    setStats({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,reLedger:0,history:[]});
+    setStats({correct:0,incorrect:0,timeouts:0,totalTime:0,streak:0,bestStreak:0,reLedger:0,evBanked:0,history:[]});
     setCardIndex(0);
     setChallengesLeft(challengeMode==="unlimited"?null:Number(challengeMode));
     // Reset queue and pick first scenario based on source
@@ -1504,7 +1604,8 @@ function TrainingMode(){
         streak:isPerfect?ns:0,
         bestStreak:Math.max(prev.bestStreak,isPerfect?ns:prev.streak),
         reLedger:prev.reLedger+reImpact,
-        history:[...prev.history,{...scenario,userAction:effective,correct,verdict,reImpact,elapsed:Math.min(elapsed,2000),isTimeout}],
+        evBanked:prev.evBanked+getMyEV(scenario,effective),
+        history:[...prev.history,{...scenario,userAction:effective,correct,verdict,reImpact,myEV:getMyEV(scenario,effective),elapsed:Math.min(elapsed,2000),isTimeout}],
       };
     });
     setPhase(newPhase);
@@ -1708,7 +1809,7 @@ function TrainingMode(){
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <div style={{flex:"1 1 180px",background:"#f9fafb",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:10,fontWeight:700,color:"#374151",marginBottom:3}}>Break-even <span style={{fontWeight:400,color:"#9ca3af"}}>— game state</span></div>
-              <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5}}>How confident you <b>need</b> to be. High-leverage lowers the bar, low-leverage raises it.</div>
+              <div style={{fontSize:11,color:"#6b7280",lineHeight:1.5}}>How confident you <b>need</b> to be. High-leverage lowers the bar. So does a shorter game — cost falls with every out. Your last challenge triples it.</div>
             </div>
             <div style={{flex:"1 1 180px",background:"#f9fafb",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:10,fontWeight:700,color:"#374151",marginBottom:3}}>Zone confidence <span style={{fontWeight:400,color:"#9ca3af"}}>— pitch location</span></div>
@@ -1889,8 +1990,8 @@ function TrainingMode(){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
           <span style={{fontSize:12,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{stats.correct}/{cardIndex+1} correct</span>
           {/* RE ledger */}
-          <span style={{fontSize:11,fontWeight:600,color:stats.reLedger>=0?green:red,fontVariantNumeric:"tabular-nums"}}>
-            RE: {stats.reLedger.toFixed(3)}
+          <span style={{fontSize:11,fontWeight:600,color:"#374151",fontVariantNumeric:"tabular-nums"}} title="Banked: EV of the challenges you made. Vs optimal: EV given up by decisions that differed from the RE-optimal call (0.000 = none).">
+            Banked <span style={{color:stats.evBanked>0?green:"#374151"}}>{stats.evBanked>=0?"+":""}{stats.evBanked.toFixed(3)}</span> · vs optimal <span style={{color:stats.reLedger<-0.0005?red:"#374151"}}>{stats.reLedger.toFixed(3)}</span>
           </span>
           {challengeBadge}
           <span style={{fontSize:11,color:"#9ca3af"}}>Card {cardIndex+1} of {totalCards}</span>
@@ -1923,13 +2024,36 @@ function TrainingMode(){
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
               <div style={mutedLabel}>Break-even</div>
               <div style={{fontSize:14,fontWeight:700,color:"#111827",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.breakeven}%</div>
-              <div style={{fontSize:8,color:"#c4c8cd",marginTop:1}}>Tango: {scenario.thresh}%</div>
+              <div style={{fontSize:8,color:"#c4c8cd",marginTop:1}}>Need {scenario.breakeven}%</div>
             </div>
             <div style={{flex:1,background:"#f9fafb",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
               <div style={mutedLabel}>Run Swing</div>
               <div style={{fontSize:14,fontWeight:700,color:scenario.pD>0?green:scenario.pD<0?red:"#6b7280",marginTop:3,fontVariantNumeric:"tabular-nums"}}>{scenario.pD>0?"+":""}{scenario.pD.toFixed(3)}</div>
             </div>
           </div>
+
+          {/* Savant reasonable-pitch flag + league context for this attack zone */}
+          {(()=>{
+            const call=perspective==="batter"?"strike":"ball";
+            const distIn=getDistFromZone(scenario.pitchX,scenario.pitchZ,scenario.szTop,scenario.szBot);
+            const outsRemT=outsRemaining(scenario.inn||1,halfOf(scenario.isTop??true),scenario.outs);
+            const[tb,ts]=scenario.count.split("-").map(Number);
+            const reas=reasonablePitch({pitch:{pX:scenario.pitchX,pZ:scenario.pitchZ,szTop:scenario.szTop,szBot:scenario.szBot,call},dist:distIn,stake:Math.abs(scenario.pD),outsRem:outsRemT,chalLeft:scenario.chalLeft||DEFAULT_CHAL_LEFT,bases:scenario.bases,balls:tb,strikes:ts});
+            const zLabel=attackZone(scenario.pitchX,scenario.pitchZ,scenario.szTop,scenario.szBot,scenario.stand||null);
+            const zRow=ZONE_EV[perspective==="batter"?"offense":"defense"]?.[zLabel];
+            return(
+              <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}} title="Savant 'reasonable pitch': looks missed, or close and worth 0.30 R, or challenged 20%+ of the time">
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:0.5,padding:"1px 6px",borderRadius:4,border:`1px solid ${reas?.reasonable?"#bfdbfe":"#e5e7eb"}`,background:reas?.reasonable?"#eff6ff":"#fff",color:reas?.reasonable?"#2563eb":"#9ca3af"}}>{reas?.reasonable?"REASONABLE":"NOT REASONABLE"}</span>
+                  <span style={{fontSize:9,color:"#6b7280"}}>{reas?.reasons?.length?reas.reasons.join(" · "):reas?.pChal!=null?`${Math.round(reas.pChal*100)}% fire it`:""}</span>
+                </div>
+                <div style={{marginTop:5,fontSize:9,color:"#6b7280",lineHeight:1.5}} title="League 2026 fires in this attack zone from this side: overturn rate and expected runs per fire after Tango's lost-challenge cost">
+                  <span style={{fontWeight:700,color:"#374151"}}>{zLabel}</span>{scenario.stand?<span style={{color:"#9ca3af"}}> · {scenario.stand}HB</span>:null}
+                  {zRow?.n?<>{" · "}<span style={{fontFamily:"'SF Mono',ui-monospace,monospace"}}>{zRow.n}</span> fires · OT <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zRow.ot>=0.5?green:red}}>{Math.round(zRow.ot*100)}%</span> · EV <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zRow.ev>=0?green:red}}>{zRow.ev>=0?"+":""}{zRow.ev.toFixed(3)}</span> R/fire</>:<span style={{color:"#9ca3af"}}> · no league fires here</span>}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Tug of war — both sides of the overturn */}
           {batterTrans&&catcherTrans&&(
@@ -2024,10 +2148,10 @@ function TrainingMode(){
             <div style={{fontSize:14,color:"#6b7280"}}>{pct}% perfect{wasEliminated?" · Eliminated":total>=totalCards?" · Complete":""}</div>
             {wasEliminated&&<div style={{fontSize:11,color:red,fontWeight:600,marginTop:4}}>Ran out of challenges after {total} card{total!==1?"s":""}</div>}
             {/* RE ledger total */}
-            <div style={{fontSize:16,fontWeight:700,color:stats.reLedger>=0?green:stats.reLedger<-0.001?red:"#6b7280",marginTop:8,fontVariantNumeric:"tabular-nums"}}>
-              {stats.reLedger>=0?"+":""}{stats.reLedger.toFixed(3)} RE
+            <div style={{display:"flex",justifyContent:"center",gap:18,marginTop:8}}>
+              <div><div style={{fontSize:16,fontWeight:700,color:stats.evBanked>0?green:"#6b7280",fontVariantNumeric:"tabular-nums"}}>{stats.evBanked>=0?"+":""}{stats.evBanked.toFixed(3)} RE</div><div style={{fontSize:10,color:"#9ca3af"}}>banked by your challenges</div></div>
+              <div><div style={{fontSize:16,fontWeight:700,color:stats.reLedger<-0.001?red:"#6b7280",fontVariantNumeric:"tabular-nums"}}>{stats.reLedger.toFixed(3)} RE</div><div style={{fontSize:10,color:"#9ca3af"}}>given up vs optimal · 0.000 is perfect</div></div>
             </div>
-            <div style={{fontSize:10,color:"#9ca3af"}}>RE lost to suboptimal decisions · 0.000 is perfect</div>
           </div>
 
           {/* Replay reel — mini zones for all pitches */}
@@ -2157,6 +2281,9 @@ export default function App(){
   // Manual state
   const[count,setCount]=useState("1-1");
   const[outs,setOuts]=useState(0);
+  const[inning,setInning]=useState(1);
+  const[half,setHalf]=useState("top");
+  const[chalLeft,setChalLeft]=useState(2);
   const[bs,setBs]=useState("000");
   
   const[persp,setPersp]=useState("offense");
@@ -2197,6 +2324,7 @@ export default function App(){
   const[mView,setMView]=useState("re");
   // Manual pitch state (click-to-plot)
   const[manualPitch,setManualPitch]=useState(null); // {pX, pZ}
+  const[manualStand,setManualStand]=useState(null); // "R" | "L" | null — batter side when the source does not carry it
 
   // Trackman state
   const[trackmanActive,setTrackmanActive]=useState(false);
@@ -2331,7 +2459,7 @@ export default function App(){
       return{pX:livePitch.pX,pZ:livePitch.pZ,szTop:livePitch.szTop,szBot:livePitch.szBot,call:livePitch.call,type:livePitch.type,speed:livePitch.speed,preCount:livePitch.preCount,preOuts:livePitch.preOuts,preBases:livePitch.preBases,result:livePitch.result};
     }
     if(mode==="demo"&&demoPlay.pitch){
-      return{...demoPlay.pitch,preOuts:demoPlay.outs,preBases:demoPlay.bases,result:demoPlay.result};
+      return{...demoPlay.pitch,preOuts:demoPlay.outs,preBases:demoPlay.bases,result:demoPlay.result,stand:DEMO_STATS[demoPlay.batterId]?.bats||null};
     }
     return null;
   },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
@@ -2340,9 +2468,12 @@ export default function App(){
   // Trackman (csv/ws/paste) σ=1.0, manual σ=1.0.
 
   // Use pre-pitch state for challenge analysis when we have pitch data
+  const activeInning=isLive&&!trackmanActive&&liveState?liveState.inn:inning;
+  const activeHalf=isLive&&!trackmanActive&&liveState?(liveState.isTop?"top":"bottom"):half;
   const activeCount=activePitch?.preCount||rawCount;
   const activeOuts=activePitch?.preOuts??rawOuts;
   const activeBs=activePitch?.preBases||rawBases;
+  const outsRem=outsRemaining(activeInning,activeHalf,activeOuts);
 
   const liveGames=games.filter(g=>g.status?.abstractGameState==="Live");
   const scheduledGames=games.filter(g=>g.status?.abstractGameState==="Preview");
@@ -2355,10 +2486,17 @@ export default function App(){
     const c=activeCount,o=activeOuts,b=activeBs;
     if(!RE[o]?.[b]?.[c])return null;
     const cur=RE[o][b][c];
-    const[balls,strikes]=c.split("-").map(Number);
-    const thresh=getTangoThresh(b,o,balls,strikes);
+    // Offense challenges called strikes, defense called balls.
+    const chalCall=persp==="offense"?"strike":"ball";
+    const swing=(()=>{const tr=getTrans(c,o,b).find(x=>x.type===(chalCall==="ball"?"b2s":"s2b"));
+      if(!tr)return null;
+      let cv;
+      if(tr.terminal){cv=tr.newOuts>=3?0:(RE[tr.newOuts]?.[tr.newBases]?.["0-0"]??null);if(cv==null)return null;cv+=tr.runs;}
+      else{cv=RE[o]?.[b]?.[tr.to];if(cv==null)return null;}
+      return Math.abs(cv-cur);})();
+    const thresh=swing==null?50:breakEven(swing,outsRem,chalLeft);
     const tier=getTier(thresh);
-    return{cur,thresh,tier,results:getTrans(c,o,b).map(t=>{
+    return{cur,thresh,tier,outsRem,chalLeft,swing,results:getTrans(c,o,b).map(t=>{
       let cor;
       if(t.terminal){
         if(t.newOuts>=3)cor=0;
@@ -2376,11 +2514,10 @@ export default function App(){
       if(!t.terminal){const[tb,ts]=t.to.split("-").map(Number);toThresh=getTangoThresh(b,o,tb,ts);toTier=getTier(toThresh);}
       else if(t.to==="K"){toThresh=null;toTier=null;} // terminal — no further challenge
       else if(t.to==="BB"){toThresh=null;toTier=null;}
-      const COST=0.20;
-      const transBE=Math.round(COST/(Math.abs(pD)+COST)*100);
-      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,transBE,rel:pD>0,mult:matchup.mult};
+      const transBE=breakEven(pD,outsRem,chalLeft);
+      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,transBE,outsRem,chalLeft,rel:pD>0,mult:matchup.mult};
     }).filter(Boolean)};
-  },[activeCount,activeOuts,activeBs,persp,matchup]);
+  },[activeCount,activeOuts,activeBs,persp,matchup,outsRem,chalLeft]);
 
   const toggleBase=useCallback(i=>setBs(p=>{const a=p.split("");a[i]=a[i]==="1"?"0":"1";return a.join("")}),[]);
   const seg=(active)=>({padding:"6px 0",flex:1,borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",textAlign:"center",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"});
@@ -2850,7 +2987,7 @@ export default function App(){
                     return(
                       <div style={{borderTop:"1px solid #f3f4f6",marginTop:2,paddingTop:10,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                         <div style={{fontSize:11,color:"#9ca3af"}}>{displayTier.sub}</div>
-                        <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Tango Thresh</div><ConfidenceNum thresh={displayThresh}/></div>
+                        <div style={{textAlign:"center"}}><div style={{fontSize:9,fontWeight:500,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Break-even</div><ConfidenceNum thresh={displayThresh}/></div>
                       </div>
                     );
                   })()}
@@ -2877,6 +3014,26 @@ export default function App(){
                       {[0,1,2].map(o=><button key={o} onClick={()=>setTmOuts(o)} style={seg(tmOuts===o)}>{o}</button>)}
                     </div>
                   </>)}
+                  {/* Cost inputs. Outs remaining moves the threshold further than the count does,
+                      and challenges in hand is the only place conservatism is justified. */}
+                  <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid #e5e7eb"}}>
+                    {!(isLive&&!trackmanActive&&liveState)&&(<>
+                      <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Inning</label>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:3,marginBottom:6}}>
+                        {[1,2,3,4,5,6,7,8,9].map(i=><button key={i} onClick={()=>setInning(i)} style={{...seg(inning===i),padding:"5px 0",fontSize:11,borderRadius:6}}>{i}</button>)}
+                      </div>
+                      <div style={{display:"flex",gap:3,marginBottom:12}}>
+                        {[["top","Top"],["bottom","Bot"]].map(([k,l])=><button key={k} onClick={()=>setHalf(k)} style={seg(half===k)}>{l}</button>)}
+                      </div>
+                    </>)}
+                    <label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Challenges in hand</label>
+                    <div style={{display:"flex",gap:3}}>
+                      {[2,1].map(nn=><button key={nn} onClick={()=>setChalLeft(nn)} style={seg(chalLeft===nn)}>{nn}</button>)}
+                    </div>
+                    <div style={{marginTop:8,fontSize:9,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>
+                      {outsRem} outs left <span style={{color:"#d1d5db"}}>·</span> cost {chalCost(outsRem,chalLeft).toFixed(3)} R
+                    </div>
+                  </div>
                   {mode==="live"&&!trackmanActive&&!liveState&&selectedGame&&(
                     <p style={{fontSize:12,color:"#9ca3af",margin:0}}>Connecting to game feed...</p>
                   )}
@@ -2908,6 +3065,7 @@ export default function App(){
                     </div>
                   )}
                   <div><label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}}>Perspective</label><div style={{display:"flex",gap:3}}>{[["offense","Batting"],["defense","Pitching"]].map(([p,l])=><button key={p} onClick={()=>setPersp(p)} style={{...seg(persp===p),fontSize:11}}>{l}</button>)}</div></div>
+                  <div style={{marginTop:8}}><label style={{fontSize:11,fontWeight:500,color:"#6b7280",display:"block",marginBottom:4}} title="Sets inside/outside for the attack-zone context. Live and demo pitches carry the batter's side; this applies when the source does not.">Batter side</label><div style={{display:"flex",gap:3}}>{[["R","RHB"],["L","LHB"],[null,"—"]].map(([v,l])=><button key={String(v)} onClick={()=>setManualStand(v)} style={{...seg((activePitch?.stand||manualStand)===v),fontSize:11}} disabled={!!activePitch?.stand&&v!==activePitch.stand}>{l}</button>)}</div></div>
                 </div>
               </div>
             </div>
@@ -2987,17 +3145,19 @@ export default function App(){
                 thresh={analysis.thresh}
                 persp={persp}
                 sigma={sigmaForMode(mode,trackmanActive)}
+                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand}}
                 interactive
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)} ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand}}/>}
               {/* Trackman paste/ws/csv-step zone card */}
               {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
                 sigma={sigmaForMode(mode,trackmanActive)}
+                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand}}
                 interactive={trackmanMethod==="paste"}
                 onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
                   const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
@@ -3031,7 +3191,7 @@ export default function App(){
             <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
               <div style={{flex:"1 1 200px",background:"#f9fafb",borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#374151",marginBottom:4}}>Break-even <span style={{fontWeight:400,color:"#9ca3af"}}>— from game state</span></div>
-                <div style={{fontSize:12,color:"#6b7280",lineHeight:1.6}}>How confident you <b>need</b> to be. Computed from the run swing of overturning this call: <span style={{fontFamily:"'SF Mono',Menlo,monospace",fontSize:11}}>cost ÷ (swing + cost)</span>. High-leverage spots lower the bar. Low-leverage spots raise it.</div>
+                <div style={{fontSize:12,color:"#6b7280",lineHeight:1.6}}>How confident you <b>need</b> to be. Computed from the run swing of overturning this call: <span style={{fontFamily:"'SF Mono',Menlo,monospace",fontSize:11}}>cost ÷ (swing + cost)</span>. High-leverage spots lower the bar. So does a shorter game — the cost falls with every out, which moves the bar further than leverage does. Holding your last challenge triples the cost.</div>
               </div>
               <div style={{flex:"1 1 200px",background:"#f9fafb",borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#374151",marginBottom:4}}>Zone confidence <span style={{fontWeight:400,color:"#9ca3af"}}>— from pitch location</span></div>
@@ -3067,9 +3227,15 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     const conf=row.call==="strike"?pOutside:100-pOutside;
     const challengerPersp=row.call==="strike"?"offense":"defense";
     const canChallenge=persp===challengerPersp;
-    const[balls,strikes]=c.split("-").map(Number);
-    const thresh=getTangoThresh(b,o,balls,strikes);
+    // Each CSV row carries its own inning.
     const trans=getTrans(c,o,b);
+    const trRel=row.call==="ball"?trans.find(t=>t.type==="b2s"):trans.find(t=>t.type==="s2b");
+    const swing=(()=>{if(!trRel)return null;const cv0=RE[o]?.[b]?.[c];if(cv0==null)return null;
+      let cv;
+      if(trRel.terminal){cv=trRel.newOuts>=3?0:(RE[trRel.newOuts]?.[trRel.newBases]?.["0-0"]??null);if(cv==null)return null;cv+=trRel.runs;}
+      else{cv=RE[o]?.[b]?.[trRel.to];if(cv==null)return null;}
+      return Math.abs(cv-cv0);})();
+    const thresh=swing==null?50:breakEven(swing,outsRemaining(Number(row.inning)||1,halfOf(row.half),o),DEFAULT_CHAL_LEFT);
     const relevantTrans=row.call==="ball"?trans.find(t=>t.type==="b2s"):trans.find(t=>t.type==="s2b");
     let dRE=null;
     if(relevantTrans){
@@ -3327,7 +3493,7 @@ function ThresholdMatrix(){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Minimum confidence needed to justify a challenge (Tango, Feb 2025). Blue = low bar, challenge-friendly — even a small hunch is enough. Red = high bar, hold unless certain.</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Reference only — Tango's published Feb 2025 table, fit on AAA data. The engine no longer uses it; thresholds now come from the cost model, which is outs-aware and runs far lower. Blue = low bar, challenge-friendly — even a small hunch is enough. Red = high bar, hold unless certain.</p>
     </div>
   );
 }
@@ -3342,12 +3508,13 @@ function Methodology(){
   const code={background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"12px 14px",marginTop:10,fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",color:"#374151",lineHeight:1.8};
   const tangoUrl="https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu";
   const tangoCBA="https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge";
+  const tangoPRV="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league";
   const link={color:"#2563eb",textDecoration:"none",fontWeight:500,borderBottom:"1px solid rgba(37,99,235,.3)"};
   return(
     <div style={{maxWidth:680}}>
-      <div style={s}><div style={h}>Decision Framework</div><p style={p}>The challenge decision compares the run value of flipping a call (the benefit) against the cost of using up a challenge (the cost). Per <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={link}>Tango's cost/benefit analysis</a> using 2025 AAA data, the average value of an overturned call is about 0.20 runs — and this holds remarkably flat across innings and challenge inventory (1 vs 2 remaining).</p><div style={code}>benefit = |ΔRE| of flipping the call<br/>cost = ~0.20 runs (empirical, from AAA challenge data)<br/><br/>Break-even = cost / (benefit + cost)<br/>CHALLENGE when your confidence {"≥"} break-even</div></div>
+      <div style={s}><div style={h}>Decision Framework</div><p style={p}>The challenge decision compares the run value of flipping a call (the benefit) against the cost of losing the challenge (the cost). A lost challenge does not cost a run — it costs the option value of the challenges you can no longer make, and that decays as the game shortens. Refit on 2026 MLB per <a href={tangoPRV} target="_blank" rel="noopener noreferrer" style={link}>Tango's probably-right valuation</a>: about 0.001 runs per remaining out while holding two challenges, 0.003 while holding the last one.</p><div style={code}>benefit = |ΔRE| of flipping the call<br/>cost = 0.001 × outs remaining (two in hand)<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= 0.003 × outs remaining (one in hand)<br/><br/>Break-even = cost / (benefit + cost)<br/>CHALLENGE when your confidence {"≥"} break-even</div></div>
 
-      <div style={s}><div style={h}>Challenge Thresholds (Tango, Feb 2025)</div><p style={p}>The engine uses Tom Tango's published break-even confidence thresholds for ABS challenges. For each combination of bases, outs, balls, and strikes, the table gives the minimum confidence you'd need that the call was wrong in order to justify spending a challenge. Thresholds range from 10% (loaded, 2 outs, full count — challenge on a hunch) to 88% (empty, 0 outs, 0-2 — hold unless certain).</p><p style={{...p,marginTop:8}}>A key insight: the threshold depends only on count and base-out state, not inning or score. Because the cost of a challenge (~0.20 runs) stays flat regardless of game situation, leverage index scales both sides of the equation equally and cancels out.</p></div>
+      <div style={s}><div style={h}>Challenge Thresholds</div><p style={p}>Thresholds are computed live from the cost model, not read from a lookup. The earlier build used Tango's Feb 2025 table, fit on AAA data, which priced a challenge at a flat ~0.20 runs. That constant carried no outs term: against 2026 MLB it runs about 4x too high at first pitch and 20x too high by the 8th. Across the 9,461 real catcher-side opportunities in 2026 it demanded a median 67% confidence where the cost model asks 20%.</p><p style={{...p,marginTop:8}}>The correction is that the threshold depends on outs remaining and challenges in hand, not only on count and base-out state — and outs remaining moves it further than the count does. A 2-2 with a man on first needs 26% in the 1st and 14% by the 5th holding two. Holding the last challenge in the 1st it needs 53%; that asymmetry is the only place conservatism survives the math.</p></div>
 
       <div style={s}><div style={h}>Count-Level Run Expectancy (RE288)</div><p style={p}>288 cells across 12 counts × 8 base states × 3 out states, following the <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>RE288 framework developed by Tom Tango</a>. Values are computed recursively: the RE at each count state is derived from the transition probabilities (ball, called strike, foul, in-play) and the resulting RE of the next state, anchored to empirical RE24 values at plate appearance endpoints. This assumes the same run expectancy for an event (single, HR, etc.) regardless of count — a simplification Tango notes is reasonable given empirical evidence.</p><p style={{...p,marginTop:8}}>The matrix tab includes three views: Run Expectancy (absolute RE from each state), Run Values (marginal RE relative to the 0-0 count in each base-out state — <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>Tango's "second chart"</a>), and Count Δ (RE shift when a ball is overturned to a strike, which drives the challenge model). A key insight from the Run Values view: the 3-2 count is the only count that flips between hitter's and pitcher's count depending on base-out state.</p></div>
 
