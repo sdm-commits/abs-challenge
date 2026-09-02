@@ -840,9 +840,10 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0,
       const stake=ctx.stake==null?null:Math.abs(ctx.stake);
       const[b,st]=(ctx.count||"0-0").split("-").map(Number);
       reasonable=reasonablePitch({pitch,dist,stake,outsRem:ctx.outsRem,chalLeft:ctx.chalLeft,bases:ctx.bases,balls:b,strikes:st});
-      const label=attackZone(pitch.pX,pitch.pZ,pitch.szTop,pitch.szBot,ctx.stand||null);
-      const row=ZONE_EV[challengerPersp]?.[label];
-      zoneCtx=row?{label,...row}:{label};
+      const zl=attackZone(pitch.pX,pitch.pZ,pitch.szTop,pitch.szBot,ctx.stand||null);
+      const inz=dist<0;const base=ZONE_EV[challengerPersp]?.[zl];const row=base?(base[inz?"in":"out"]||base):null;
+      const label=`${zl} (${inz?"in":"out"})`;
+      zoneCtx=row&&row.n?{label,...row}:{label};
     }
     return{dist,inside,conf,shouldChallenge,canChallenge,reasonable,zoneCtx};
   },[pitch,thresh,persp,sigma,ctx]);
@@ -890,10 +891,7 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0,
                 <span style={{fontSize:9,fontWeight:700,letterSpacing:0.5,padding:"1px 6px",borderRadius:4,border:`1px solid ${reasonable.reasonable?"#bfdbfe":"#e5e7eb"}`,background:reasonable.reasonable?"#eff6ff":"#f9fafb",color:reasonable.reasonable?"#2563eb":"#9ca3af"}}>{reasonable.reasonable?"REASONABLE":"NOT REASONABLE"}</span>
                 <span style={{fontSize:9,color:"#6b7280"}}>{reasonable.reasons.length?reasonable.reasons.join(" · "):reasonable.pChal!=null?`${Math.round(reasonable.pChal*100)}% fire it`:""}</span>
               </div>}
-              {zoneCtx&&<div style={{marginTop:6,fontSize:9,color:"#6b7280",lineHeight:1.5}} title="League 2026 fires in this attack zone from this side: overturn rate and expected runs per fire after Tango's lost-challenge cost">
-                <span style={{fontWeight:700,color:"#374151"}}>{zoneCtx.label}</span>
-                {zoneCtx.n?<>{" · "}<span style={{fontFamily:"'SF Mono',ui-monospace,monospace"}}>{zoneCtx.n}</span> fires · OT <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zoneCtx.ot>=0.5?"#16a34a":"#dc2626"}}>{Math.round(zoneCtx.ot*100)}%</span> · EV <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zoneCtx.ev>=0?"#16a34a":"#dc2626"}}>{zoneCtx.ev>=0?"+":""}{zoneCtx.ev.toFixed(3)}</span> R/fire</>:<span style={{color:"#9ca3af"}}> · no league fires here</span>}
-              </div>}
+
               {interactive&&<button onClick={onClear} style={{marginTop:6,background:"none",border:"none",cursor:"pointer",fontSize:9,color:"#d1d5db",fontFamily:"inherit",padding:0}}>Clear</button>}
             </div>
           ):hasPitch&&!canChallenge?(
@@ -2063,18 +2061,16 @@ function TrainingMode(){
             const outsRemT=outsRemaining(scenario.inn||1,halfOf(scenario.isTop??true),scenario.outs);
             const[tb,ts]=scenario.count.split("-").map(Number);
             const reas=reasonablePitch({pitch:{pX:scenario.pitchX,pZ:scenario.pitchZ,szTop:scenario.szTop,szBot:scenario.szBot,call},dist:distIn,stake:Math.abs(scenario.pD),outsRem:outsRemT,chalLeft:scenario.chalLeft||DEFAULT_CHAL_LEFT,bases:scenario.bases,balls:tb,strikes:ts});
-            const zLabel=attackZone(scenario.pitchX,scenario.pitchZ,scenario.szTop,scenario.szBot,scenario.stand||null);
-            const zRow=ZONE_EV[perspective==="batter"?"offense":"defense"]?.[zLabel];
+            const zBase=attackZone(scenario.pitchX,scenario.pitchZ,scenario.szTop,scenario.szBot,scenario.stand||null);
+            const zIn=distIn<0;const zB=ZONE_EV[perspective==="batter"?"offense":"defense"]?.[zBase];const zRow=zB?(zB[zIn?"in":"out"]||zB):null;
+            const zLabel=`${zBase} (${zIn?"in":"out"})`;
             return(
               <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}} title="Savant 'reasonable pitch': looks missed, or close and worth 0.30 R, or challenged 20%+ of the time">
                   <span style={{fontSize:9,fontWeight:700,letterSpacing:0.5,padding:"1px 6px",borderRadius:4,border:`1px solid ${reas?.reasonable?"#bfdbfe":"#e5e7eb"}`,background:reas?.reasonable?"#eff6ff":"#fff",color:reas?.reasonable?"#2563eb":"#9ca3af"}}>{reas?.reasonable?"REASONABLE":"NOT REASONABLE"}</span>
                   <span style={{fontSize:9,color:"#6b7280"}}>{reas?.reasons?.length?reas.reasons.join(" · "):reas?.pChal!=null?`${Math.round(reas.pChal*100)}% fire it`:""}</span>
                 </div>
-                <div style={{marginTop:5,fontSize:9,color:"#6b7280",lineHeight:1.5}} title="League 2026 fires in this attack zone from this side: overturn rate and expected runs per fire after Tango's lost-challenge cost">
-                  <span style={{fontWeight:700,color:"#374151"}}>{zLabel}</span>{scenario.stand?<span style={{color:"#9ca3af"}}> · {scenario.stand}HB</span>:null}
-                  {zRow?.n?<>{" · "}<span style={{fontFamily:"'SF Mono',ui-monospace,monospace"}}>{zRow.n}</span> fires · OT <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zRow.ot>=0.5?green:red}}>{Math.round(zRow.ot*100)}%</span> · EV <span style={{fontFamily:"'SF Mono',ui-monospace,monospace",fontWeight:700,color:zRow.ev>=0?green:red}}>{zRow.ev>=0?"+":""}{zRow.ev.toFixed(3)}</span> R/fire</>:<span style={{color:"#9ca3af"}}> · no league fires here</span>}
-                </div>
+
               </div>
             );
           })()}
