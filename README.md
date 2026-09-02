@@ -1,72 +1,82 @@
 # ABS Challenge Engine
 
-A decision-support tool for optimizing ball-strike challenge decisions under MLB's Automated Ball-Strike (ABS) system. Built for front office analysts, coaching staffs, and player development.
+A decision-support tool for ball-strike challenge decisions under MLB's Automated Ball-Strike (ABS) system, and a trainer for making them in two seconds.
 
 **[Live App →](https://abs-challenge.vercel.app/)**
 
+Built by [Scott Middlecamp](https://x.com/sdmiddlecamp). Cost model after [Tango](https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league).
+
 ## What It Does
 
-Under ABS, players have roughly two seconds to decide whether to challenge an umpire's call — with no outside help. This tool quantifies that decision using count-level run expectancy and [Tom Tango's break-even confidence thresholds](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge).
+Under ABS, a player has about two seconds to decide whether to challenge a called pitch, with no outside help. This tool turns that into two numbers: how much the call is worth, and how sure you need to be.
 
 The core model:
 
 ```
-benefit = |ΔRE| of flipping the call
-cost    = ~0.20 runs (empirical, from 2025 AAA challenge data)
+benefit   = |ΔRE| of flipping the call            (RE288, 2026)
+cost      = 0.001 R × outs remaining              (two challenges in hand)
+          = 0.003 R × outs remaining              (one challenge in hand)
 
 Break-even = cost / (benefit + cost)
-CHALLENGE when your confidence ≥ break-even
+CHALLENGE when P(the call was wrong) ≥ break-even
 ```
 
-Thresholds range from **10%** (bases loaded, 2 outs, full count — challenge on a hunch) to **88%** (bases empty, 0 outs, 0-2 count — hold unless certain).
+A lost challenge does not cost a run. It costs the option value of the challenges you can no longer make, which shrinks with every out. Measured on every 2026 game, that is about 0.001 runs per out remaining while holding two and 0.003 while holding the last one, the values Tango arrived at independently. So the bar is a suspicion, not a certainty: with two in hand, a 0.20-run call needs a 21% chance the umpire was wrong in the 1st inning and 3% in the 9th.
 
-## Why Inning & Score Don't Matter
+## Why Outs Matter and Score Doesn't
 
-Per [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge), the average value of an overturned call is ~0.20 runs — and this holds remarkably flat across innings and challenge inventory (1 vs 2 remaining). Because the cost stays constant, leverage index scales both sides of the equation equally and cancels out. The challenge decision reduces to: how big is the ΔRE of this specific count flip relative to the fixed ~0.20 run cost?
+The cost falls with outs remaining, so the same call gets cheaper to challenge every inning. Holding your last challenge triples it. Those two things move the threshold further than the count does.
+
+Score is deliberately left out. The engine values calls in runs (RE288), not win probability, which matches Tango's framing: challenge decisions are about converting the umpire's misses, and the run value of a miss does not depend on who is ahead.
 
 ## Features
 
-**Simulator** — Set count, outs, base runners, and perspective (batting/pitching). See the break-even confidence threshold, run expectancy, and challenge recommendation for every valid transition. Includes a "Two inputs, one decision" explainer showing how break-even (from game state) and zone confidence (from pitch location) combine to drive the challenge/hold decision.
+**Simulator** — Set count, outs, base runners, inning, half, challenges in hand, and perspective (batting or pitching). See run expectancy, the break-even confidence for this state, and the recommendation for every valid transition. Plot a pitch on the zone (or feed one in) and the zone card adds:
 
-**Training Mode** — Timed flashcard drills that test challenge decisions under pressure. Each round presents a game state and pitch location, gives you 2 seconds to decide challenge or accept, then reveals a tiered verdict based on both zone confidence and break-even math.
+- **Distance and confidence** from the pitch's location against the batter's ABS zone.
+- **A CHALLENGE / HOLD verdict** from confidence versus break-even, or **NOT CHALLENGEABLE** when the team has no challenges left or a position player is pitching.
+- **Savant's "reasonable pitch" flag**: looks missed, or within 3 inches worth at least 0.30 runs, or a pitch other players challenge 20% of the time or more, from a challenge-probability model calibrated to Baseball Savant.
+- **Batter side** (RHB / LHB), taken from the feed or demo when available and settable by hand otherwise.
 
-- **Six verdict tiers**: 🎯 Perfect, 🧊 Disciplined hold, 👁 Smart but costly, 🤏 Tough hold, ⚠ Missed opportunity, ✗ Bad challenge — each with a plain-English explanation of what happened and why.
-- **Three difficulty levels**: Level 1 (obvious calls, extreme game states), Level 2 (mid-range thresholds, the shadow zone), Level 3 (edge cases, borderline pitches near the effective zone boundary). Corner pitches — near two edges simultaneously — appear at levels 2–3.
-- **Challenge budget modes**: Unlimited (practice), 2 challenges (MLB rules), or 1 challenge (hard mode). Incorrect challenges cost inventory; correct challenges are free. Round ends when you're out. Summary includes a budget narrative contrasting your worst wasted challenge against your biggest missed opportunity.
-- **Historical games**: A selectable library of real Statcast pitch data from famous games. Includes 2025 World Series Game 7, 2024 AL Wild Card Game 3, Angel Hernandez's worst game, and Domingo Germán's perfect game. Each pitch has real coordinates, batter/pitcher names, pitch type and speed, and contextual notes explaining why the pitch mattered.
-- **Adaptive difficulty**: Tracks rolling accuracy over the last 5 cards. At 80%+ perfect rate, pitch offsets tighten (down to 0.3× at 100%). At level 3 with adaptation active, 60% of game states are drawn from a coin-flip pool where break-even is 36–60% — the true toss-up decisions where zone confidence and break-even converge.
-- **Tug of war on reveal**: After every pitch, the reveal card shows both sides of the overturn — "Overturn strike" vs "Overturn ball" — with run swings and a proportional bar showing who has more to gain. Teaches that every challenge is asymmetric between batter and catcher.
-- **Break-even intuition**: A one-sentence explanation on every reveal card connecting the game state to the break-even in plain English. "Loaded, 2 out — overturning this walk scores a run. The swing is huge, so even a small read justifies the challenge."
-- **RE decision ledger**: Running total of run expectancy lost to suboptimal decisions. 0.000 is perfect — every mistake shows a negative cost vs the optimal action. Displayed per-card on reveal and as the summary headline.
-- **Replay reel**: Summary screen opens with a horizontal strip of mini zone graphics for every pitch in the round, color-coded by verdict with emoji badges and zone confidence. Spot patterns at a glance — "all my mistakes were high pitches" or "I kept biting on the inside corner."
+**Live Game Mode** — Polls the MLB Stats API: linescore every 5 seconds for count, outs, runners, inning, and score; the live feed every 10 seconds for each called pitch's coordinates and the batter's own ABS zone limits. From the feed it also reads:
 
-**Signal Mode** — Visual green/red/yellow indicator showing whether to challenge based on zone confidence vs. break-even threshold for the current game state. Designed for training catchers and batters to internalize challenge decisions before game situations.
+- **Challenges remaining** for each team, by counting lost challenges in the play-by-play. The challenging team's count drives the cost tier automatically ("FROM FEED"). In extras a team with none left is floored at one.
+- **Batter side** from the current matchup.
+- **Position players pitching**, which makes the call unchallengeable.
 
-**Live Game Mode** — Connects to the MLB Stats API and polls the linescore every 5 seconds during live games. Auto-populates count, outs, runners, inning, and score with team abbreviations. On game selection, preloads season xwOBA for both rosters via a [Vercel serverless endpoint](#xwoba-api) and computes a **matchup multiplier** for each at-bat that adjusts ΔRE based on the current batter-pitcher pairing relative to league average.
+On game selection it preloads season xwOBA for both rosters through a [Vercel serverless endpoint](#xwoba-api) and computes a matchup multiplier for each at-bat.
 
-**Trackman Integration** — Accepts pitch location data via CSV upload, coordinate paste, or websocket connection. Supports Trackman V3 native field names (`PlateLocSide`, `PlateLocHeight`, `PitchCall`), Statcast aliases (`plate_x`, `plate_z`), and shorthand — case-insensitive, first match wins. Zone confidence is calculated automatically using a Gaussian model (σ=1.0") based on pitch distance from the zone edge.
+**Training Mode** — Timed flashcards: a game state and pitch location, two seconds to decide, then a tiered verdict.
 
-**World Series Game 7 Demo** — Walk through 8 pivotal at-bats from the LAD-TOR Game 7 with real 2025 Statcast xwOBA data, showing how challenge decisions would have played out under ABS.
+- **Six verdict tiers**: 🎯 Perfect, 🧊 Disciplined hold, 👁 Smart but costly, 🤏 Tough hold, ⚠ Missed opportunity, ✗ Bad challenge, each with a plain-English reason.
+- **Three difficulty levels**, with corner pitches at levels 2 and 3, and adaptive tightening once you are running hot.
+- **Challenge budget modes**: Unlimited, 2 challenges (MLB rules), or 1.
+- **Historical games**: real Statcast pitches from 2025 World Series Game 7, the 2024 AL Wild Card, Angel Hernández's worst game, and Domingo Germán's perfect game, with batter side.
+- **Two ledgers**: runs banked by the challenges you made, and runs given up versus the RE-optimal decision (0.000 is a perfect round).
+- **On reveal**: both sides of the overturn, the reasonable-pitch flag, a one-line break-even intuition, and a replay reel at the end.
 
-**Terminal Transitions** — Models strikeouts and walks as full base-out state changes, not just count changes. Overturning a ball on an x-2 count produces a strikeout (outs +1, runners stay). Overturning a strike on a 3-x count produces a walk (batter to 1st, forced runners advance, bases-loaded walk scores a run).
+**Signal Mode** — A green/red/yellow indicator for the current game state, for internalizing the decision before it comes up.
 
-**RE288 Matrix** — Interactive heatmap of all 288 run expectancy states (12 counts × 8 base states × 3 out states) with three views:
-- **Run Expectancy** — Absolute expected runs from each state through end of half-inning
-- **Run Values** — Marginal runs relative to the 0-0 count in each base-out state ([Tango's "second chart"](https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu))
-- **Count Δ** — RE shift when a ball is overturned to a strike, including terminal strikeout deltas for x-2 counts
+**Trackman Integration** — Pitch location by CSV upload, coordinate paste, or websocket. Accepts Trackman V3 field names (`PlateLocSide`, `PlateLocHeight`, `PitchCall`), Statcast aliases, and shorthand.
 
-**Threshold Matrix** — Full heatmap of Tango's break-even confidence thresholds across all count × base-out states. Blue = low bar (challenge-friendly), red = high bar (hold unless certain).
+**World Series Game 7 Demo** — Eight pivotal called pitches from LAD–TOR Game 7 with real coordinates and 2025 xwOBA.
 
-**Methodology** — Full documentation of the decision framework, data sources, Tango's cost/benefit analysis, matchup adjustment math, and known limitations.
+**Terminal Transitions** — Strikeouts and walks are full base-out state changes, not count changes. Overturning a ball on an x-2 count adds an out; overturning a strike on a 3-x count walks the batter, advances forced runners, and scores the run with the bases loaded.
+
+**RE288 Matrix** — All 288 run-expectancy states (12 counts × 8 base states × 3 outs) in three views: run expectancy, run values relative to 0-0 in each base-out state, and the count delta of a ball-to-strike overturn including terminal deltas.
+
+**Thresholds** — Tango's February 2025 threshold table, kept for reference. The engine no longer reads it; thresholds are computed from the cost model and run far lower.
+
+**Methodology** — The decision framework, the cost model, the zone model, the matchup math, data sources, and limitations.
 
 ## The Model
 
 | Factor | Description |
 |---|---|
-| **ΔRE** | Run expectancy difference between the called count and corrected count, including terminal K/BB state changes |
-| **Challenge Cost** | ~0.20 runs — empirical average from 2025 AAA data, flat across innings and inventory ([Tango, Feb 2025](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge)) |
-| **Matchup Multiplier** | xwOBA-based scaling of ΔRE for the current batter-pitcher pairing vs. league average (live and demo modes) |
-| **Zone Confidence** | Gaussian probability estimate based on pitch distance from zone edge (σ=1.0"), computed from Trackman or Statcast pitch coordinates |
+| **ΔRE** | Run-expectancy difference between the called count and the corrected count, including terminal K/BB state changes. RE288 from the 2026 regular season through the All-Star break (419,418 pitches; cells under 300 pitches shrunk toward the pooled 2024–26 shape). |
+| **Challenge cost** | 0.001 R per out remaining with two challenges in hand, 0.003 with one (Tango, Aug 2026). Measured on all 2026 team-inning states: future overturn runs fall linearly with outs remaining, and a team with one challenge left collects about three-quarters of what a team with two does. |
+| **Zone confidence** | P(the call was wrong) from the pitch's signed distance to the strike/ball boundary. See Zone Model. |
+| **Matchup multiplier** | xwOBA-based scaling of ΔRE for the batter-pitcher pairing versus league average (live and demo modes). |
 
 ```
 batterFactor  = batterXwOBA / leagueXwOBA
@@ -74,52 +84,53 @@ pitcherFactor = pitcherXwOBA_against / leagueXwOBA
 matchupMultiplier = batterFactor × pitcherFactor    (clamped to [0.5, 2.0])
 adjustedΔRE = ΔRE × matchupMultiplier
 
-Break-even = 0.20 / (|adjustedΔRE| + 0.20)
+Break-even = cost / (|adjustedΔRE| + cost)
 ```
-
-A league-average matchup produces a multiplier of ~1.0×. An elite hitter facing a weak pitcher pushes ×1.3+, lowering the break-even threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar.
 
 ## Zone Model
 
-Zone confidence is calculated automatically from pitch location data:
+A pitch is a strike when any part of the ball touches the batter's ABS zone (17 inches wide, 27% to 53.5% of the batter's height) at the middle of the plate.
 
 ```
-zoneWidth  = (17 + 2.9) / 12    // plate width + ball diameter, in feet
-distance   = pitch distance from nearest zone edge
-confidence = Φ(distance / σ)     // σ = 1.0 inch for manual modes, σ = 0.25 inch for Hawkeye, σ = 1.0 inch for Trackman
+d          = signed distance from ball center to the strike/ball line, inches (+ = outside)
+confidence = Φ((d − offset) / σ)
 ```
 
-Strike zone boundaries use `sz_top` and `sz_bot` from Statcast when available, or configurable defaults (3.5 / 1.6 ft) for Trackman data where per-batter zone heights are not included in the CSV.
+Measured on 8,252 ABS-resolved 2026 pitches, public Statcast coordinates against the feed's own zone reproduce the ruling almost deterministically: it flips 0.047 inches **inside** the geometric line and is otherwise one-way. So for Hawk-Eye-sourced pitches (live, signal, demo) σ is 0.05 in with that offset, a near step function. For manual placement and Trackman σ stays 1.0 in.
+
+Zone limits come from the feed's `strikeZoneTop` / `strikeZoneBottom` when present (in 2026 these are the batter's ABS zone), and from configurable defaults (3.5 / 1.6 ft) for Trackman CSVs without them.
 
 ## xwOBA API
 
-The app includes a Vercel serverless function (`/api/xwoba`) that fetches season xwOBA data from Baseball Savant for all qualified batters and pitchers:
+A Vercel serverless function (`/api/xwoba`) fetches season xwOBA from Baseball Savant for qualified batters and pitchers:
 
-- Fetches batter + pitcher CSVs from `baseballsavant.mlb.com` in parallel
-- Parses and returns JSON: `{ season, updated, lg_xwoba, players: { [id]: { name, xwoba, pa, type } } }`
-- In-memory cache with 12-hour TTL; serves stale cache if Savant is down
-- Falls back to a statsapi OPS→xwOBA conversion formula for players missing from Savant data
+- Fetches batter and pitcher CSVs in parallel and returns `{ season, updated, lg_xwoba, players: { [id]: { name, xwoba, pa, type } } }`
+- In-memory cache with a 12-hour TTL; serves stale data if Savant is down
+- Falls back to a statsapi OPS→xwOBA conversion for players missing from Savant
 
-### Known Limitations
+## Known Limitations
 
-- xwOBA uses full-season Statcast data — doesn't capture platoon splits, recent form, or pitch-type matchup edges
-- Trackman V3 CSVs do not include per-batter strike zone heights or umpire identity — these must be added manually or configured in the UI
-- Zone confidence model assumes Gaussian error distribution; real tracking system accuracy may vary
+- **ABS outages** are not detected live; a call is treated as challengeable whenever the team has a challenge left.
+- **Extra innings**: the extra challenge is modeled as a floor of one from the 10th on, an assumption rather than a parsed rule, and outs remaining floors at one.
+- **Score** is not part of the value; see above.
+- **Umpire tendencies** are not used. The plate umpire is known from the feed but the engine does not adjust for which edges a crew misses.
+- **Matchup xwOBA** is full-season; no platoon splits, recent form, or pitch-type edges.
+- **Trackman CSVs** carry no per-batter zone heights or umpire identity.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/sdm-commits/abs-challenge-engine.git
-cd abs-challenge-engine
+git clone https://github.com/sdm-commits/abs-challenge.git
+cd abs-challenge
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` to run locally. Live game mode and the xwOBA API work in local dev via Vite's proxy.
+Open `http://localhost:5173`. Live game mode and the xwOBA API work in local dev through Vite's proxy.
 
 ## Deploy
 
-Connect this repo to [Vercel](https://vercel.com) — it auto-detects Vite and deploys with zero configuration. The `/api/xwoba` serverless function deploys automatically.
+Connect the repo to [Vercel](https://vercel.com); it detects Vite and deploys with no configuration, including the `/api/xwoba` function.
 
 ```bash
 npm run build
@@ -128,27 +139,25 @@ npx vercel --prod
 
 ## Tech
 
-Single-file React application (`src/App.jsx`). No external dependencies beyond React.
+Single-file React application (`src/App.jsx`) with small data files beside it: the 2026 first-half RE288, the Savant-calibrated challenge-probability model, and a per-zone table of 2026 challenge outcomes. No dependencies beyond React.
 
-- React hooks for state management (`useState`, `useMemo`, `useEffect`, `useRef`)
-- [MLB Stats API](https://statsapi.mlb.com/api/v1) for live game data and player stats
-- [Baseball Savant](https://baseballsavant.mlb.com) for season xwOBA (via serverless API)
-- Vercel serverless function for xwOBA data (`api/xwoba.js`)
-- Trackman V3 / Statcast pitch data via CSV, websocket, or coordinate paste
-- CSS-in-JS (inline styles, no build dependencies)
-- Responsive layout with collapsible math details on mobile
+- React hooks for state
+- [MLB Stats API](https://statsapi.mlb.com/api/v1) for live game data, play-by-play, and player stats
+- [Baseball Savant](https://baseballsavant.mlb.com) for season xwOBA, through the serverless function
+- Trackman V3 / Statcast pitch data by CSV, websocket, or coordinate paste
+- Inline styles, responsive layout
 
 ## Data Attribution
 
-RE288 values derived from [Tom Tango's recursive run expectancy model](https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu), computed using 2010–2015 Retrosheet play-by-play data.
+Run expectancy: RE288 computed from 2026 Statcast pitch data (regular season through the All-Star break), following [Tango's RE288 framework](https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu).
 
-Challenge thresholds from [Tango's cost/benefit analysis of ABS challenges](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge) (Feb 2025), validated against 2025 AAA challenge data.
+Challenge cost and the valuation framing: [Tango, "Probably-Right Valuation for ABS Challenge Skill"](https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league) (Aug 2026). The reference threshold table is from [Tango's cost/benefit analysis](https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge) (Feb 2025).
+
+Reasonable-pitch and challenge-opportunity definitions: [Baseball Savant ABS metrics documentation](https://baseballsavant.mlb.com/abs-metrics-documentation).
 
 Methodology follows Tango, Lichtman & Dolphin, [*The Book: Playing the Percentages in Baseball*](https://www.amazon.com/Book-Playing-Percentages-Baseball/dp/1597971294).
 
-xwOBA data from [Baseball Savant](https://baseballsavant.mlb.com) (Statcast expected weighted on-base average).
-
-Live game data from the [MLB Stats API](https://statsapi.mlb.com). Use of MLB data is subject to the [MLB copyright notice](http://gdx.mlb.com/components/copyright.txt).
+xwOBA from [Baseball Savant](https://baseballsavant.mlb.com). Live game data from the [MLB Stats API](https://statsapi.mlb.com); use of MLB data is subject to the [MLB copyright notice](http://gdx.mlb.com/components/copyright.txt).
 
 ## License
 
