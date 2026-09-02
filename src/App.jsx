@@ -3233,7 +3233,15 @@ export default function App(){
         {tab==="methodology"&&<Methodology/>}
         {tab==="training"&&<TrainingMode/>}
       </div>
-    </div>
+    
+        <div style={{marginTop:24,paddingTop:10,borderTop:"1px solid #e5e7eb",fontSize:10,color:"#9ca3af",fontFamily:"'SF Mono',Menlo,monospace",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span>Built by <a href="https://x.com/sdmiddlecamp" target="_blank" rel="noopener noreferrer" style={{color:"#374151",fontWeight:600,textDecoration:"none"}}>Scott Middlecamp</a></span>
+          <span style={{color:"#d1d5db"}}>·</span>
+          <a href="https://github.com/sdm-commits/" target="_blank" rel="noopener noreferrer" style={{color:"#6b7280",textDecoration:"none"}}>GitHub</a>
+          <span style={{color:"#d1d5db"}}>·</span>
+          <span>cost model after <a href="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league" target="_blank" rel="noopener noreferrer" style={{color:"#6b7280",textDecoration:"none"}}>Tango</a></span>
+        </div>
+      </div>
   );
 }
 
@@ -3534,7 +3542,8 @@ function Methodology(){
   const p={fontSize:13,lineHeight:1.8,color:"#4b5563",margin:0};
   const code={background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"12px 14px",marginTop:10,fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",color:"#374151",lineHeight:1.8};
   const tangoUrl="https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu";
-  const tangoCBA="https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge";
+  const tangoCBA2026="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league";
+const tangoCBA="https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge";
   const tangoPRV="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league";
   const link={color:"#2563eb",textDecoration:"none",fontWeight:500,borderBottom:"1px solid rgba(37,99,235,.3)"};
   return(
@@ -3590,7 +3599,7 @@ function Methodology(){
 
       <div style={s}><div style={h}>Limitations & Next Steps</div><p style={p}>The matchup adjustment uses season xwOBA from Statcast, which strips out defense and luck but doesn't yet capture platoon splits (L/R advantages), recent form, or pitch-type matchup edges. A production system would incorporate rolling xwOBA windows, platoon splits, and potentially batter hot/cold zones against specific pitch types. Trackman data can also be consumed via websocket or CSV for NCAA/college environments where ABS is being adopted.</p></div>
 
-      <div style={{...s,background:"#f9fafb"}}><div style={{...h,fontSize:13}}>Data Sources</div><p style={{...p,fontSize:12}}>RE288 matrix computed recursively per <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (2018)</a>, using 2010–2015 Retrosheet play-by-play data. Challenge thresholds per <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (Feb 2025)</a>, validated against 2025 AAA challenge data. The RE288 framework and the concept of count-level run values are one of Tango's many contributions to modern sabermetrics. Methodology follows Tango, Lichtman & Dolphin, "The Book: Playing the Percentages in Baseball." Live game data from MLB Stats API (statsapi.mlb.com). xwOBA data from Baseball Savant (baseballsavant.mlb.com).</p></div>
+      <div style={{...s,background:"#f9fafb"}}><div style={{...h,fontSize:13}}>Data Sources</div><p style={{...p,fontSize:12}}>RE288 from the 2026 regular season through the All-Star break (419,418 pitches; cells under 300 pitches shrunk toward the pooled 2024–26 shape). Challenge cost after <a href={tangoCBA2026} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (Aug 2026)</a>: 0.001 R per out remaining with two challenges in hand, 0.003 with one; the outs-aware break-even replaces the flat thresholds of his <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Feb 2025 table</a>, which the Thresholds tab keeps for reference. The RE288 framework follows <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (2018)</a> and "The Book" (Tango, Lichtman &amp; Dolphin). Strike/ball truth: the ball touches the batter's ABS zone at the middle of the plate (rounded corners), with the boundary offset measured on 8,252 ABS-resolved 2026 pitches. Reasonable-pitch flag per Baseball Savant's definition. Live game data from MLB Stats API (statsapi.mlb.com); xwOBA from Baseball Savant.</p></div>
     </div>
   );
 }
