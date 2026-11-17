@@ -3692,7 +3692,16 @@ function ZoneView(){
           <div style={{display:"flex",gap:3}}>{[["fire","Challenged"],["left","Not challenged"]].map(([k,l])=><button key={k} onClick={()=>setLayer(k)} style={seg(layer===k)}>{l}</button>)}</div>
           <div style={{display:"flex",gap:3}}>{[["me",cat?"Catcher":"Club"],["lg","League avg"],["diff","Difference"]].map(([k,l])=><button key={k} onClick={()=>setWho(k)} style={seg(who===k)}>{l}</button>)}</div>
         </div>
-        {D.views.length>1&&<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {V.misses} missed calls, {V.fired} challenged, {zvSgn(V.runsTotal)} R of the club's {zvSgn(Sv.runsAboveAvg)} R</div>}
+        {D.views.length>1&&(()=>{
+          // Split Savant's club total across batter hands in proportion to the location data (largest remainder),
+          // so the hand counts always add up to the headline number.
+          const tot=D.views.reduce((t,v)=>t+v.misses,0)||1,raw=D.views.map(v=>Sv.misses*v.misses/tot),fl=raw.map(Math.floor);
+          let left=Sv.misses-fl.reduce((a,b)=>a+b,0);raw.map((r,i)=>[r-fl[i],i]).sort((a,b)=>b[0]-a[0]).forEach(([,i])=>{if(left>0){fl[i]++;left--;}});
+          // Same for runs, in hundredths, so the two hands add to Savant's runs above average exactly.
+          const T=Math.round(Sv.runsAboveAvg*100),rr=D.views.map(v=>v.runsTotal*100),rs=rr.reduce((x,y)=>x+y,0)||1,rw=rr.map(r=>r+(T-rs)*(r/rs)),rf=rw.map(Math.floor);
+          let rl=T-rf.reduce((x,y)=>x+y,0);rw.map((r,i)=>[r-rf[i],i]).sort((x,y)=>y[0]-x[0]).forEach(([,i])=>{if(rl>0){rf[i]++;rl--;}});
+          return<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {fl[hand]} of the club's {Sv.misses} missed calls · {zvSgn(rf[hand]/100)} of its {zvSgn(Sv.runsAboveAvg)} R</div>;
+        })()}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(280px,100%),1fr))",gap:12,alignItems:"start"}}>
           <div style={{border:"1px solid #e5e7eb",borderRadius:8,padding:8}}>
             <div style={{...eb,color:"#9ca3af",marginBottom:6}}>{whoTxt} · missed calls {layer==="fire"?"challenged":"not challenged"} · per game</div>
@@ -3720,12 +3729,7 @@ function ZoneView(){
             <div style={{fontSize:9,color:"#9ca3af",marginTop:4}}>– = fewer than {ZV_ME_FLOOR} {ring.who} / {ZV_LG_FLOOR} league missed calls in the cell · hover a cell for counts</div>
           </div>
         </div>
-        <p style={{fontSize:10,color:"#9ca3af",lineHeight:1.6,margin:"10px 0 0"}}>
-          Headline numbers are Baseball Savant's ABS challenge leaderboard (2026 regular season{cat?"; catcher side, pitcher-initiated challenges excluded":""}). Runs vs avg is Savant's runs above average: runs won on overturns minus the cost of lost challenges, against an average challenger on the same pitches.
-          The heatmap, ring and edge runs split those totals by location from our per-pitch rebuild, scaled so the edges sum to Savant's figure; ring and heatmap miss counts come from our own pitch-level calls and can differ from Savant's by up to about 10.
-          Catcher's view{cat?", batter-relative (inside on the left)":V.flip?" (a lefty's inside edge is on the right)":""}; height scaled to the average ABS zone ({D.zone.bot.toFixed(2)}–{D.zone.top.toFixed(2)} ft). Heatmap = Gaussian KDE of missed calls per game; league = all other {cat?"catchers":"clubs"}, per {cat?"catcher":"club"}-game.
-          Ring bands from the middle out: 1.5+ / 0.5–1.5 / 0–0.5 in. inside the ABS line (black box), then 0–0.5 / 0.5–1.5 / 1.5+ in. outside. {cat?`Catchers with ${index.minGames}+ games.`:""}
-        </p>
+        <p style={{fontSize:10,color:"#9ca3af",lineHeight:1.6,margin:"10px 0 0"}}>Baseball Savant ABS challenge leaderboard, 2026 · catcher's view{cat?", inside on the left":V.flip?", a lefty's inside edge on the right":""}</p>
       </div>)}
     </div>
   );
