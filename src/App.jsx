@@ -2257,7 +2257,10 @@ function TrainingMode(){
 const TABS=[{key:"simulator",label:"Simulator"},{key:"matrix",label:"RE Matrix"},{key:"thresholds",label:"Thresholds"},{key:"zones",label:"Zones"},{key:"methodology",label:"Methodology"},{key:"training",label:"Training"}];
 
 export default function App(){
-  const[tab,setTab]=useState("simulator");
+  const[tab,setTab]=useState(()=>{try{const t=new URLSearchParams(window.location.search).get("tab");return TABS.some(x=>x.key===t)?t:"simulator";}catch{return"simulator";}});
+  // Keep ?tab= in step with the open tab (shareable links); the Zones tab adds its own side/id.
+  useEffect(()=>{zvWriteUrl(q=>{if(tab==="simulator")q.delete("tab");else q.set("tab",tab);if(tab!=="zones"){q.delete("side");q.delete("id");}});
+    document.querySelector(".tab-nav [aria-current]")?.scrollIntoView({block:"nearest",inline:"nearest"});},[tab]);
   // Manual state
   const[count,setCount]=useState("1-1");
   const[outs,setOuts]=useState(0);
@@ -2521,6 +2524,10 @@ export default function App(){
         input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#111827;cursor:pointer;border:2px solid #fff}
         button{font-family:inherit}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+        .tab-nav::-webkit-scrollbar{display:none}
+        .zv-search:focus{border-color:#9ca3af!important;outline:none}
+        @media (pointer:coarse){.zv-search{font-size:16px!important}}
+        @media(max-width:600px){.zv-picker{flex:none!important;width:100%!important;max-width:none!important}}
       `}</style>
 
       <header style={{background:"#fff",borderBottom:"1px solid #e5e7eb"}}>
@@ -2529,10 +2536,10 @@ export default function App(){
             <h1 style={{fontSize:20,fontWeight:700,color:"#111827",margin:0,letterSpacing:-.3}}>ABS Challenge Engine</h1>
             <span style={{fontSize:12,color:"#9ca3af"}}>Run Expectancy Decision Model</span>
           </div>
-          <nav style={{display:"flex",gap:0,marginTop:8}}>
+          <nav className="tab-nav" style={{display:"flex",gap:0,marginTop:8,overflowX:"auto",overflowY:"hidden",paddingBottom:1,marginBottom:-1,scrollbarWidth:"none"}}>
             {TABS.map(t=>(
-              <button key={t.key} onClick={()=>setTab(t.key)} style={{
-                padding:"8px 16px",border:"none",cursor:"pointer",fontSize:13,fontWeight:tab===t.key?600:400,
+              <button key={t.key} onClick={()=>setTab(t.key)} aria-current={tab===t.key?"page":undefined} style={{
+                padding:"8px 16px",border:"none",cursor:"pointer",fontSize:13,fontWeight:tab===t.key?600:400,flex:"none",whiteSpace:"nowrap",
                 background:"transparent",color:tab===t.key?"#111827":"#9ca3af",
                 borderBottom:tab===t.key?"2px solid #111827":"2px solid transparent",marginBottom:-1,transition:"all .12s",
               }}>{t.label}</button>
@@ -3493,10 +3500,107 @@ function zoneRingSvg(D,V,mode){
   return{svg:s,center,smax,who};
 }
 
+// Club abbreviations as they appear in public/zones/index.json.
+const ZV_TEAMS={ATH:"Athletics",ATL:"Atlanta Braves",AZ:"Arizona Diamondbacks",BAL:"Baltimore Orioles",BOS:"Boston Red Sox",CHC:"Chicago Cubs",CIN:"Cincinnati Reds",CLE:"Cleveland Guardians",COL:"Colorado Rockies",CWS:"Chicago White Sox",DET:"Detroit Tigers",HOU:"Houston Astros",KC:"Kansas City Royals",LAA:"Los Angeles Angels",LAD:"Los Angeles Dodgers",MIA:"Miami Marlins",MIL:"Milwaukee Brewers",MIN:"Minnesota Twins",NYM:"New York Mets",NYY:"New York Yankees",PHI:"Philadelphia Phillies",PIT:"Pittsburgh Pirates",SD:"San Diego Padres",SEA:"Seattle Mariners",SF:"San Francisco Giants",STL:"St. Louis Cardinals",TB:"Tampa Bay Rays",TEX:"Texas Rangers",TOR:"Toronto Blue Jays",WSH:"Washington Nationals"};
+const ZV_SIDES={catcher:"Catchers",hitter:"Hitters (club)"};
+const zvNorm=s=>String(s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const zvName=(side,x)=>side==="catcher"?x.name:ZV_TEAMS[x.id]||x.name;
+const zvAbbr=(side,x)=>side==="catcher"?x.team:x.id;
+const zvHay=(side,x)=>zvNorm(side==="catcher"?`${x.name} ${x.team} ${ZV_TEAMS[x.team]||""}`:`${x.id} ${ZV_TEAMS[x.id]||""}`);
+const zvCollate=(a,b)=>a.localeCompare(b,"en",{sensitivity:"base"});
+const zvLastName=n=>n.split(" ").slice(-1)[0];
+function zvSortList(list,side,sort){
+  const nm=side==="catcher"?(a,b)=>zvCollate(zvLastName(a.name),zvLastName(b.name))||zvCollate(a.name,b.name):(a,b)=>zvCollate(zvName(side,a),zvName(side,b));
+  const by=sort==="name"?nm:sort==="games"?(a,b)=>(b.games??0)-(a.games??0)||nm(a,b):(a,b)=>b.runsAboveAvg-a.runsAboveAvg||nm(a,b);
+  return[...list].sort(by);
+}
+// Rewrite the query string in place (no history entry), leaving other params and the hash alone.
+function zvWriteUrl(fn){
+  try{const u=new URL(window.location.href);fn(u.searchParams);const next=u.pathname+u.search+u.hash;
+    if(next!==window.location.pathname+window.location.search+window.location.hash)window.history.replaceState(window.history.state,"",next);}catch{/* no URL access: selection just isn't shareable */}
+}
+// Last selection, so leaving the Zones tab and coming back keeps your place.
+const zvLast={side:null,id:null,sort:"runs"};
+function zvInitial(){
+  try{const q=new URLSearchParams(window.location.search),sd=q.get("side"),id=q.get("id");
+    if(sd||id)return{side:sd==="hitter"||sd==="club"?"hitter":"catcher",id};}catch{/* fall through */}
+  return{side:zvLast.side||"catcher",id:zvLast.id};
+}
+// Find an id on the wanted side, then on the other one; null if it is nowhere.
+function zvResolve(ix,side,id){
+  if(id==null)return null;
+  const want=String(id).toLowerCase(),other=side==="catcher"?"hitter":"catcher";
+  for(const sd of[side,other]){const x=(sd==="catcher"?ix.catchers:ix.clubs).find(e=>String(e.id).toLowerCase()===want);if(x)return{side:sd,id:x.id};}
+  return null;
+}
+
+// Type-to-filter combobox over the sorted catcher / club lists, with prev / next stepping.
+function ZonePicker({side,pick,lists,onPick,onStep}){
+  const[open,setOpen]=useState(false);
+  const[q,setQ]=useState("");
+  const[act,setAct]=useState(0);
+  const cur=lists[side].find(x=>x.id===pick),pos=lists[side].indexOf(cur);
+  const label=cur?`${zvName(side,cur)} · ${zvAbbr(side,cur)}`:"";
+  const items=useMemo(()=>{
+    const toks=zvNorm(q).split(/\s+/).filter(Boolean);
+    if(!toks.length)return lists[side].map(x=>({side,x}));
+    const other=side==="catcher"?"hitter":"catcher";
+    const hits=sd=>lists[sd].filter(x=>{const h=zvHay(sd,x);return toks.every(t=>h.includes(t));}).map(x=>({side:sd,x}));
+    return[...hits(side),...hits(other)];
+  },[q,side,lists]);
+  useEffect(()=>{if(open)document.getElementById(`zv-opt-${act}`)?.scrollIntoView({block:"nearest"});},[open,act,items]);
+  const openList=()=>{setQ("");setAct(Math.max(0,pos));setOpen(true);};
+  const close=()=>{setOpen(false);setQ("");};
+  const choose=it=>{onPick(it.side,it.x.id);close();};
+  const onKey=e=>{
+    if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+      e.preventDefault();
+      if(!open)openList();
+      else if(items.length)setAct(a=>(a+(e.key==="ArrowDown"?1:-1)+items.length)%items.length);
+    }else if(e.key==="Enter"){if(open&&items[act]){e.preventDefault();choose(items[act]);}}
+    else if(e.key==="Escape"){if(open){e.preventDefault();close();}}
+    else if(!open&&(e.key==="ArrowLeft"||e.key==="ArrowRight")&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.shiftKey){e.preventDefault();onStep(e.key==="ArrowLeft"?-1:1);}
+  };
+  const groups=[];items.forEach((it,i)=>{const g=groups[groups.length-1];if(g&&g.side===it.side)g.rows.push([it,i]);else groups.push({side:it.side,rows:[[it,i]]});});
+  const searching=q.trim()!=="";
+  const nav={width:28,height:28,flex:"none",borderRadius:6,border:"none",background:"#f3f4f6",color:"#374151",fontSize:15,fontWeight:700,lineHeight:1,cursor:"pointer",fontFamily:"inherit",padding:0};
+  const noun=side==="catcher"?"catcher":"club";
+  return(
+    <div className="zv-picker" style={{position:"relative",display:"flex",alignItems:"center",gap:4,flex:"1 1 250px",minWidth:0,maxWidth:480}}>
+      <button type="button" onClick={()=>onStep(-1)} aria-label={`Previous ${noun}`} title={`Previous ${noun} (←)`} style={nav}>‹</button>
+      <input className="zv-search" type="text" role="combobox" aria-label="Search catchers and clubs by name or team" aria-expanded={open} aria-controls="zv-list" aria-autocomplete="list" aria-activedescendant={open&&items[act]?`zv-opt-${act}`:undefined}
+        autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="Search name or team…"
+        value={open?q:label}
+        onChange={e=>{setQ(open?e.target.value:(e.nativeEvent.data||""));setAct(0);setOpen(true);}}
+        onFocus={openList} onMouseDown={()=>{if(!open)openList();}} onBlur={close} onKeyDown={onKey}
+        style={{flex:1,minWidth:0,width:"100%",boxSizing:"border-box",height:28,fontSize:12,fontWeight:600,padding:"0 8px",borderRadius:6,border:"1px solid #e5e7eb",fontFamily:"inherit",color:"#111827",background:"#fff",textOverflow:"ellipsis"}}/>
+      <button type="button" onClick={()=>onStep(1)} aria-label={`Next ${noun}`} title={`Next ${noun} (→)`} style={nav}>›</button>
+      <span aria-hidden="true" style={{flex:"none",fontSize:10,color:"#9ca3af",fontVariantNumeric:"tabular-nums",minWidth:30,textAlign:"right"}}>{pos+1}/{lists[side].length}</span>
+      {open&&<div id="zv-list" role="listbox" aria-label="Catchers and clubs" style={{position:"absolute",top:"100%",left:0,right:0,marginTop:4,zIndex:30,background:"#fff",border:"1px solid #e5e7eb",borderRadius:8,boxShadow:"0 8px 24px rgba(17,24,39,.14)",maxHeight:"min(330px,55vh)",overflowY:"auto",padding:4}}>
+        {!items.length&&<div style={{padding:"8px",fontSize:12,color:"#9ca3af"}}>No catcher or club matches “{q.trim()}”.</div>}
+        {groups.map(g=>(
+          <div key={g.side} role="group" aria-label={ZV_SIDES[g.side]}>
+            {searching&&<div aria-hidden="true" style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,padding:"5px 8px 2px"}}>{ZV_SIDES[g.side]}</div>}
+            {g.rows.map(([it,i])=>{const x=it.x,sel=it.side===side&&x.id===pick,up=x.runsAboveAvg>=0;return(
+              <div key={x.id} id={`zv-opt-${i}`} role="option" aria-selected={sel} onMouseDown={e=>e.preventDefault()} onClick={()=>choose(it)} onMouseMove={()=>{if(act!==i)setAct(i);}}
+                style={{display:"flex",alignItems:"baseline",gap:8,padding:"6px 8px",borderRadius:6,cursor:"pointer",background:i===act?"#f3f4f6":"transparent",fontSize:12}}>
+                <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#111827",fontWeight:sel?700:500}}>{zvName(it.side,x)} <span style={{fontSize:10,fontWeight:600,color:"#9ca3af"}}>{zvAbbr(it.side,x)}</span></span>
+                {x.games!=null&&<span style={{flex:"none",fontSize:10,color:"#6b7280",fontVariantNumeric:"tabular-nums"}}>{x.games} G</span>}
+                <span style={{flex:"none",minWidth:50,textAlign:"right",fontSize:11,fontWeight:700,fontVariantNumeric:"tabular-nums",color:up?"#16a34a":"#dc2626"}}>{zvSgn(x.runsAboveAvg)} R</span>
+              </div>);})}
+          </div>))}
+      </div>}
+    </div>
+  );
+}
+
 function ZoneView(){
   const[index,setIndex]=useState(null);
-  const[side,setSide]=useState("catcher");
+  const init=useRef(null);if(!init.current)init.current=zvInitial();
+  const[side,setSide]=useState(init.current.side);
   const[pick,setPick]=useState(null);
+  const[sort,setSort]=useState(zvLast.sort);
+  const lastBySide=useRef({});
   const[D,setD]=useState(null);
   const[hand,setHand]=useState(0);
   const[layer,setLayer]=useState("fire");
@@ -3504,12 +3608,37 @@ function ZoneView(){
   const[err,setErr]=useState(null);
   const cvRef=useRef(null);
   const getJson=url=>fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();});
-  useEffect(()=>{getJson("/zones/index.json").then(ix=>{setIndex(ix);setPick(ix.catchers[0]?.id??null);}).catch(()=>setErr("Zone data not found."));},[]);
+  useEffect(()=>{getJson("/zones/index.json").then(ix=>{
+    // Selection from the URL (or the last visit); unknown ids fall back to the top of the default sort.
+    const want=init.current,hit=zvResolve(ix,want.side,want.id);
+    const sd=hit?hit.side:want.side;
+    setIndex(ix);setSide(sd);setPick(hit?hit.id:zvSortList(sd==="catcher"?ix.catchers:ix.clubs,sd,"runs")[0]?.id??null);
+  }).catch(()=>setErr("Zone data not found."));},[]);
   useEffect(()=>{
     if(!pick)return;let live=true;setD(null);setErr(null);
     getJson(`/zones/${side}_${pick}.json`).then(d=>{if(live){setD(d);setHand(0);}}).catch(()=>{if(live)setErr("Could not load this zone file.");});
     return()=>{live=false;};
   },[side,pick]);
+  // Clubs carry no games count, so "games" only applies to catchers.
+  const sortKey=side==="hitter"&&sort==="games"?"runs":sort;
+  const lists=useMemo(()=>index?{catcher:zvSortList(index.catchers,"catcher",sort),hitter:zvSortList(index.clubs,"hitter",sort==="games"?"runs":sort)}:null,[index,sort]);
+  const choose=(sd,id)=>{setSide(sd);setPick(id);};
+  const step=d=>{const l=lists?.[side];if(!l?.length)return;const i=l.findIndex(x=>x.id===pick);setPick(l[((i<0?0:i+d)+l.length)%l.length].id);};
+  const stepRef=useRef(step);stepRef.current=step;
+  useEffect(()=>{
+    if(!index||!pick)return;
+    lastBySide.current[side]=pick;zvLast.side=side;zvLast.id=pick;
+    zvWriteUrl(q=>{q.set("tab","zones");q.set("side",side);q.set("id",pick);});
+  },[index,side,pick]);
+  // ← / → step through the sorted list unless you are typing somewhere.
+  useEffect(()=>{
+    const onKey=e=>{
+      if(e.defaultPrevented||e.metaKey||e.ctrlKey||e.altKey||e.shiftKey||(e.key!=="ArrowLeft"&&e.key!=="ArrowRight"))return;
+      const t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||"")))return;
+      e.preventDefault();stepRef.current(e.key==="ArrowLeft"?-1:1);
+    };
+    window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
+  },[]);
   const V=D?.views?.[hand];
   const cat=D?.side==="catcher";
   useEffect(()=>{
@@ -3524,8 +3653,6 @@ function ZoneView(){
   const stat=(label,val,col,note)=>(<div style={{background:"#f6f7f8",borderRadius:6,padding:"6px 8px",textAlign:"center"}}><div style={eb}>{label}</div><div style={{fontSize:15,fontWeight:700,color:col||"#111827",fontVariantNumeric:"tabular-nums",marginTop:2}}>{val}</div>{note&&<div style={{fontSize:9,color:"#6b7280",marginTop:1}}>{note}</div>}</div>);
   if(err&&!index)return<div style={{padding:20,color:"#6b7280",fontSize:13}}>{err}</div>;
   if(!index)return<div style={{padding:20,color:"#9ca3af",fontSize:13}}>Loading zones…</div>;
-  const lastName=n=>n.split(" ").slice(-1)[0];
-  const list=side==="catcher"?[...index.catchers].sort((a,b)=>lastName(a.name).localeCompare(lastName(b.name),"en",{sensitivity:"base"})||a.name.localeCompare(b.name,"en",{sensitivity:"base"})):index.clubs;
   const Sv=D?.savant;
   let zoneSvg="",ring=null,vmaxLeg=1;
   if(D&&V){
@@ -3541,15 +3668,17 @@ function ZoneView(){
   return(
     <div>
       <div className="mx-controls" style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <div style={{display:"flex",gap:3}}>{[["catcher","Catchers"],["hitter","Hitters (club)"]].map(([k,l])=><button key={k} onClick={()=>{setSide(k);setPick((k==="catcher"?index.catchers:index.clubs)[0]?.id);}} style={seg(side===k)}>{l}</button>)}</div>
-        <select value={pick||""} onChange={e=>setPick(e.target.value)} style={{fontSize:12,padding:"5px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontFamily:"inherit",color:"#111827",background:"#fff",maxWidth:"100%"}}>
-          {list.map(x=><option key={x.id} value={x.id}>{side==="catcher"?`${x.name} (${x.team})`:x.name}  {zvSgn(x.runsAboveAvg)} R</option>)}
-        </select>
+        <div style={{display:"flex",gap:3}}>{Object.entries(ZV_SIDES).map(([k,l])=><button key={k} onClick={()=>{if(k!==side)choose(k,lastBySide.current[k]??lists[k][0]?.id);}} aria-pressed={side===k} style={seg(side===k)}>{l}</button>)}</div>
+        <ZonePicker side={side} pick={pick} lists={lists} onPick={choose} onStep={step}/>
+        <div style={{display:"flex",alignItems:"center",gap:3}}>
+          <span style={{...eb,marginRight:3}}>Sort</span>
+          {[["runs","Runs vs avg"],["name","Name"],...(side==="catcher"?[["games","Games"]]:[])].map(([k,l])=><button key={k} onClick={()=>{zvLast.sort=k;setSort(k);}} aria-pressed={sortKey===k} style={seg(sortKey===k)}>{l}</button>)}
+        </div>
       </div>
       {err?<div style={{padding:20,color:"#6b7280",fontSize:13}}>{err}</div>:!D||!V?<div style={{padding:20,color:"#9ca3af",fontSize:13}}>Loading…</div>:(
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:14}}>
         <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
-          <span style={{fontSize:16,fontWeight:700,color:"#111827"}}>{cat?D.name:`${D.name} hitters`}</span>
+          <span style={{fontSize:16,fontWeight:700,color:"#111827"}}>{cat?D.name:`${ZV_TEAMS[D.name]||D.name} hitters`}</span>
           <span style={{fontSize:11,color:"#6b7280"}}>{D.season} · {cat?`${D.team} · catcher side: strikes called balls`:"hitter side: balls called strikes"}</span>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:6,margin:"10px 0 12px"}}>
