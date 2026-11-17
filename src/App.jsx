@@ -3383,7 +3383,7 @@ function ChallengeCard({r,persp,mode}){
 
 // Break-even color scale, shared by every break-even number and the Thresholds table.
 // Pivots at 25% (the top of the "Challenge" tier): blue below, red above, full red by 75%.
-const BAR_PIVOT=25;
+const BAR_PIVOT=25;   // white: the median break-even across all 2026 challenge opportunities (24.9%, n = 327,342)
 const barT=(v)=>v<BAR_PIVOT?Math.min((BAR_PIVOT-v)/BAR_PIVOT,1):Math.min((v-BAR_PIVOT)/50,1);
 function ConfidenceNum({thresh}){
   // Same palette as RE matrix: rgb(214,48,49) red, rgb(33,102,172) blue
@@ -3877,7 +3877,7 @@ function ThresholdMatrix(){
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Challenges left</span><div style={{display:"flex",gap:3}}>{[2,1].map(c=><button key={c} onClick={()=>setTChal(c)} style={seg(tChal===c)}>{c}</button>)}</div></div>
         <div style={{flex:1}}/>
         <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>Challenge</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
-          <span>Hold</span></div>
+          <span>Hold · white = 25%</span></div>
       </div>
       <div style={{fontSize:11,color:"#6b7280",margin:"0 4px 8px",fontVariantNumeric:"tabular-nums"}}>{outsRem} outs left in the game · a lost challenge costs {cost.toFixed(3)} R</div>
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
@@ -3902,7 +3902,7 @@ function ThresholdMatrix(){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Confidence needed to challenge, from the engine's cost model: break-even = cost / (call value + cost). Call value is the run swing between ball and strike in this count and base-out state (2026 RE288); the same number applies to a called ball or a called strike. Cost is 0.001 R per out left in the game while holding two challenges, 0.003 with the last one, so every cell drops as the game goes on. Blue = low bar, challenge on a hunch. Red = high bar, hold unless sure.</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Confidence needed to challenge, from the engine's cost model: break-even = cost / (call value + cost). Call value is the run swing between ball and strike in this count and base-out state (2026 RE288); the same number applies to a called ball or a called strike. Cost is 0.001 R per out left in the game while holding two challenges, 0.003 with the last one, so every cell drops as the game goes on. White = 25%, the typical break-even across 2026's challenge opportunities (median of 327,342). Blue = lower bar, challenge on a hunch. Red = higher bar, hold unless sure.</p>
       <BreakEvenByValue threshBg={threshBg} threshText={threshText}/>
     </div>
   );
