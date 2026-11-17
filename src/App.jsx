@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import RE_2026_H1 from "./re288_2026_h1.json";
+import RE_2026 from "./re288_2026_savant.json";
 import ZONE_EV from "./zone_ev_2026.json";
 import { tangoChallengeProb } from "./tangoChalProb.js";
 
@@ -12,8 +12,10 @@ const BASES_LIST=[
   {label:"1B 2B",key:"110",desc:"1st & 2nd"},{label:"3B",key:"001",desc:"3rd"},{label:"1B 3B",key:"101",desc:"1st & 3rd"},
   {label:"2B 3B",key:"011",desc:"2nd & 3rd"},{label:"1B 2B 3B",key:"111",desc:"Loaded"},
 ];
-// RE288, 2026 regular season through 7/12 (first half); cells under 300 pitches shrunk toward the 2024-26 shape.
-const RE=RE_2026_H1;
+// RE288 behind Baseball Savant's 2026 ABS challenge leaderboard (Tango's table), recovered
+// exactly: RE24 plus a fixed share of the walk or strikeout value per count, with RE24 solved
+// from 263 leaderboard call values (max residual 0.000007 R). See analysis/q56_savant_re288_rule.py.
+const RE=RE_2026;
 
 // Walk base-state transitions: batter to 1st, forced runners advance
 const WALK_MAP={"000":"100","100":"110","010":"110","110":"111","001":"101","101":"111","011":"111","111":"111"};
@@ -28,8 +30,24 @@ function getTrans(c,outs,bases){
   // Strike overturned to ball: apply ball to pre-pitch count
   if(b+1<=3)t.push({type:"s2b",label:"Strike → Ball",from:c,to:`${b+1}-${s}`,desc:"Overturned to ball",terminal:false});
   else if(b===3)t.push({type:"s2b",label:"Strike → Walk",from:c,to:"BB",desc:"Overturned to ball → BB",terminal:true,newOuts:outs,newBases:WALK_MAP[bases]||"100",newCount:"0-0",runs:WALK_RUNS[bases]||0});
+  // The count (or K/BB) the umpire's call produced, as opposed to the corrected one.
+  t.forEach(x=>{x.called=x.type==="b2s"?(b<3?`${b+1}-${s}`:"BB"):(s<2?`${b}-${s+1}`:"K");});
   return t;
 }
+
+// RE after the pitch is ruled a ball or a strike, from the pre-pitch state (walk / strikeout terminal).
+function outcomeRE(bases,outs,c,kind){
+  const[b,s]=c.split("-").map(Number);
+  if(kind==="ball"){
+    if(b<3)return RE[outs]?.[bases]?.[`${b+1}-${s}`]??null;
+    const v=RE[outs]?.[WALK_MAP[bases]]?.["0-0"];return v==null?null:v+(WALK_RUNS[bases]||0);
+  }
+  if(s<2)return RE[outs]?.[bases]?.[`${b}-${s+1}`]??null;
+  return outs+1>=3?0:(RE[outs+1]?.[bases]?.["0-0"]??null);
+}
+// A call's value is the corrected outcome minus the CALLED outcome (ball vs strike), the
+// quantity Savant credits per overturn. Not corrected minus pre-pitch, which is about half.
+const transCalledRE=(t,c,outs,bases)=>outcomeRE(bases,outs,c,t.type==="s2b"?"strike":"ball");
 
 // Challenge cost model (Tango, refit on 2026 MLB).
 // https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league
@@ -39,8 +57,9 @@ function getTrans(c,outs,bases){
 // outs term and ran ~4x too high at first pitch, ~20x too high by the 8th.
 const COST_PER_OUT={2:0.001,1:0.003};
 const DEFAULT_CHAL_LEFT=2;
-// Outs left in the game for BOTH teams — 54-out scale.
-const outsRemaining=(inn,half,outs)=>Math.max(1,(9-(inn||1))*6+(half==="top"?3:0)+(3-(outs||0)));
+// Outs left in the game for BOTH teams — 54-out scale. Every extra inning is priced like the 9th
+// (top 6 − outs, bottom 3 − outs), which is how Savant's leaderboard charges a lost challenge.
+const outsRemaining=(inn,half,outs)=>Math.max(1,(9-Math.min(inn||1,9))*6+(half==="top"?3:0)+(3-(outs||0)));
 const chalCost=(outsRem,chalLeft)=>COST_PER_OUT[Math.max(1,Math.min(2,chalLeft||DEFAULT_CHAL_LEFT))]*outsRem;
 // Minimum confidence that makes the challenge +EV.
 const breakEven=(swing,outsRem,chalLeft)=>{
@@ -51,7 +70,7 @@ const halfOf=(v)=>String(v??"top").toLowerCase().startsWith("b")||v===false?"bot
 const fmt=v=>v==null?"—":v.toFixed(3);
 function heatColor(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));if(t<.5){const s=t/.5;return`rgb(${Math.round(33+(255-33)*s)},${Math.round(102+(255-102)*s)},${Math.round(172+(255-172)*s)})`}const s=(t-.5)/.5;return`rgb(${Math.round(255-(255-214)*s)},${Math.round(255-(255-48)*s)},${Math.round(255-(255-49)*s)})`}
 function heatText(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));return(t<.2||t>.8)?"#fff":"#333"}
-function dColor(d){if(d==null)return"transparent";const t=Math.min(Math.abs(d)/.45,1);if(d<0)return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`}
+function dColor(d){if(d==null)return"transparent";const t=Math.min(Math.abs(d)/1.0,1);if(d<0)return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`}
 function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 
 // ============================================================
@@ -150,11 +169,6 @@ const TEAM_ABBR={108:"LAA",109:"ARI",110:"BAL",111:"BOS",112:"CHC",113:"CIN",114
 const teamAbbr=(t)=>TEAM_ABBR[t?.id]||t?.abbreviation||t?.name||"?";
 let LG_XWOBA=0.315; // default, overridden by xwoba.json if available
 
-// Tango's ABS Challenge Thresholds (Feb 2025)
-// Minimum confidence % needed to justify a challenge
-// Access: TANGO[bases][outs][strikes][balls]
-const TANGO={"000":{0:[[73,60,50,46],[80,70,60,56],[88,82,76,73]],1:[[71,64,51,37],[78,72,61,47],[85,82,75,65]],2:[[55,50,40,24],[63,59,49,32],[73,69,62,47]]},"100":{0:[[63,50,39,35],[70,59,49,45],[78,72,64,60]],1:[[61,54,40,28],[65,60,49,37],[71,69,62,51]],2:[[44,39,30,17],[48,44,35,22],[56,51,43,31]]},"010":{0:[[65,60,52,47],[72,68,61,57],[76,79,76,73]],1:[[56,54,48,39],[61,60,56,48],[63,64,67,66]],2:[[39,34,28,19],[44,40,33,25],[46,42,37,31]]},"110":{0:[[54,41,32,28],[59,47,37,33],[67,62,55,50]],1:[[50,44,32,22],[54,48,37,26],[56,54,50,42]],2:[[33,29,22,12],[37,32,25,15],[39,34,29,20]]},"001":{0:[[66,58,49,45],[64,67,63,59],[74,77,74,70]],1:[[57,54,47,36],[49,50,52,50],[61,62,64,63]],2:[[40,36,29,19],[32,28,24,19],[44,39,34,28]]},"101":{0:[[58,50,41,37],[58,56,50,45],[66,65,60,55]],1:[[49,46,39,29],[45,45,43,37],[53,53,52,46]],2:[[32,28,23,15],[29,25,21,15],[36,32,27,20]]},"011":{0:[[61,58,51,46],[59,66,66,61],[65,70,69,65]],1:[[50,48,45,38],[42,43,50,53],[49,50,55,56]],2:[[33,29,24,17],[26,23,19,17],[32,28,24,20]]},"111":{0:[[48,37,29,25],[47,37,29,25],[48,37,29,25]],1:[[43,38,28,19],[41,36,28,19],[42,37,28,19]],2:[[27,24,18,10],[26,22,17,10],[27,23,18,10]]}};
-const getTangoThresh=(bases,outs,balls,strikes)=>TANGO[bases]?.[outs]?.[strikes]?.[balls]??50;
 const getTier=(thresh)=>thresh<=25?{label:"Challenge",sub:"Even a hunch is enough",color:"#2563eb",bg:"#f9fafb",border:"#bfdbfe"}:thresh<=45?{label:"Lean challenge",sub:"Worth it if it looked wrong",color:"#16a34a",bg:"#f9fafb",border:"#bbf7d0"}:thresh<=65?{label:"Toss-up",sub:"Only if you saw it clearly",color:"#d97706",bg:"#fffbeb",border:"#fde68a"}:thresh<=80?{label:"Lean hold",sub:"Need to be pretty sure",color:"#ea580c",bg:"#fff7ed",border:"#fed7aa"}:{label:"Hold",sub:"Only challenge if certain",color:"#dc2626",bg:"#fef2f2",border:"#fecaca"};
 
 // ============================================================
@@ -193,7 +207,7 @@ function getZoneConfidence(px, pz, szTop = ZONE_TOP, szBot = ZONE_BOT) {
   return gaussianCdf((d - BOUNDARY_OFFSET_FT) / SIGMA);
 }
 
-// Confidence (5–95%) that the umpire's CALL was wrong, from the challenger's side.
+// Confidence (0–100%) that the umpire's CALL was wrong, from the challenger's side.
 // A batter challenges a called strike — wrong iff the pitch was actually a ball (outside).
 // A catcher challenges a called ball — wrong iff the pitch was actually a strike (inside).
 function callWrongConfidence(px, pz, szTop, szBot, perspective) {
@@ -293,20 +307,34 @@ function withGameClock(gs) {
            chalLeft: Math.random() < 0.75 ? 2 : 1, ...gs };
 }
 
+// Level-3 toss-ups: game states whose break-even sits between 20% and 60%, where the
+// pitch location actually decides it. Drawn from the cost model, so inning and
+// challenges left count, not just count/bases/outs.
+function pickHighBarState() {
+  let gs;
+  for (let k = 0; k < 60; k++) {
+    gs = withGameClock(pickGameState(3));
+    const [b, s] = gs.count.split("-").map(Number);
+    const sw = callSwing(gs.bases, gs.outs, b, s);
+    if (sw == null || sw <= 0) continue;
+    const be = breakEven(sw, outsRemaining(gs.inn, halfOf(gs.isTop), gs.outs), gs.chalLeft);
+    if (be >= 20 && be <= 60) return gs;
+  }
+  return gs;
+}
+
 function generateScenario(difficulty, perspective) {
   const gs = withGameClock(pickGameState(difficulty));
   const { pitchX, pitchZ } = generatePitchLocation(difficulty);
   // Random pitches are generated against the default zone, so szTop/szBot are the defaults.
   const zoneConf = callWrongConfidence(pitchX, pitchZ, ZONE_TOP, ZONE_BOT, perspective);
   const [b, s] = gs.count.split("-").map(Number);
-  const thresh = getTangoThresh(gs.bases, gs.outs, b, s);
-  const tier = getTier(thresh);
   const trans = getTrans(gs.count, gs.outs, gs.bases);
   const relevantType = perspective === "batter" ? "s2b" : "b2s";
   const transition = trans.find(t => t.type === relevantType);
   if (!transition) return generateScenario(difficulty, perspective);
 
-  const cur = RE[gs.outs]?.[gs.bases]?.[gs.count];
+  const cur = transCalledRE(transition, gs.count, gs.outs, gs.bases);
   if (cur == null) return generateScenario(difficulty, perspective);
   let cor;
   if (transition.terminal) {
@@ -322,14 +350,14 @@ function generateScenario(difficulty, perspective) {
   // Break-even: the actual confidence % needed to justify this challenge
   const breakeven = breakEven(pD, outsRemaining(gs.inn, halfOf(gs.isTop), gs.outs), gs.chalLeft);
   const correctAction = zoneConf > 0 && zoneConf >= breakeven ? "challenge" : "accept";
+  const thresh = breakeven, tier = getTier(breakeven);
   return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, stand: Math.random() < 0.6 ? "R" : "L" };
 }
 
 // ============================================================
-// CHALLENGE CONTEXT — tug of war + both transitions
+// CHALLENGE CONTEXT — both transitions
 // ============================================================
 function ChallengeContext({analysis,activeCount,persp}){
-  const[showTip,setShowTip]=useState(false);
   if(!analysis||!activeCount)return null;
   const[balls,strikes]=activeCount.split("-").map(Number);
 
@@ -345,74 +373,31 @@ function ChallengeContext({analysis,activeCount,persp}){
   const batterIsRelevant=persp==="offense";
   const catcherIsRelevant=persp==="defense";
 
-  // Tug of war bar: proportional to raw |dRE| — who gains more from overturning
-  const bSwing=batterCard?Math.abs(batterCard.dRE):0;
-  const cSwing=catcherCard?Math.abs(catcherCard.dRE):0;
-  const swingTotal=bSwing+cSwing;
-  const bPct=swingTotal===0?50:(bSwing/swingTotal)*100;
-  const bWins=bPct>=50;
-
-  let tipText="";
-  if(!batterCard)tipText="Only catcher can challenge (no strikes in count)";
-  else if(!catcherCard)tipText="Only batter can challenge (no balls in count)";
-  else{
-    const ratio=Math.max(bSwing,cSwing)/(Math.min(bSwing,cSwing)||0.001);
-    const who=bWins?"Batter":"Catcher";
-    tipText=ratio<1.2?"Challenge stakes are roughly even":ratio<2?`${who} has more to gain from overturning`:`${who} has much more to gain from overturning`;
-  }
-
   return(
     <div style={{marginTop:8}}>
       <div style={{display:"flex",gap:0,alignItems:"stretch"}}>
         {/* Batter side */}
-        <div style={{flex:1,background:bWins?"#eef0f3":"#f6f7f8",borderRadius:"6px 0 0 6px",padding:"5px 8px",textAlign:"center"}}>
+        <div style={{flex:1,background:"#f6f7f8",borderRadius:"6px 0 0 6px",padding:"5px 8px",textAlign:"center"}}>
           {batterCard?(<>
             <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn strike</div>
-            <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{batterCard.from} → {batterCard.to}</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{batterCard.called} → {batterCard.to==="BB"?"Walk":batterCard.to}</div>
             {batterIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Need {thresh}%</div>}
           </>):(
             <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No strikes to overturn</div>
           )}
         </div>
         {/* Catcher side */}
-        <div style={{flex:1,background:!bWins?"#eef0f3":"#f6f7f8",borderRadius:"0 6px 6px 0",padding:"5px 8px",textAlign:"center"}}>
+        <div style={{flex:1,background:"#f6f7f8",borderRadius:"0 6px 6px 0",padding:"5px 8px",textAlign:"center"}}>
           {catcherCard?(<>
             <div style={{fontSize:7,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5}}>Overturn ball</div>
-            <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{catcherCard.from} → {catcherCard.to}</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#111827",marginTop:1}}>{catcherCard.called==="BB"?"Walk":catcherCard.called} → {catcherCard.to}</div>
             {catcherIsRelevant&&<div style={{fontSize:9,color:"#6b7280"}}>Need {thresh}%</div>}
           </>):(
             <div style={{fontSize:9,color:"#d1d5db",paddingTop:4,paddingBottom:4}}>No balls to overturn</div>
           )}
         </div>
       </div>
-      {/* Tug of war bar */}
-      <div style={{position:"relative",marginTop:4}}>
-        <div style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",padding:"2px 0"}} onClick={()=>setShowTip(t=>!t)}>
-          <div style={{fontSize:8,fontWeight:600,color:bWins?"#374151":"#c4c8cd",width:14,textAlign:"center"}}>AB</div>
-          <div style={{flex:1,height:5,borderRadius:3,background:"#e5e7eb",overflow:"hidden",display:"flex"}}>
-            {batterCard&&catcherCard?(<>
-              <div style={{width:`${bPct}%`,background:bWins?"#374151":"#c4c8cd",borderRadius:bPct>95?3:"3px 0 0 3px",transition:"width .4s ease"}}/>
-              <div style={{width:`${100-bPct}%`,background:bWins?"#c4c8cd":"#374151",borderRadius:bPct<5?3:"0 3px 3px 0",transition:"width .4s ease"}}/>
-            </>):batterCard?(
-              <div style={{width:"100%",background:"#374151",borderRadius:3}}/>
-            ):catcherCard?(
-              <div style={{width:"100%",background:"#374151",borderRadius:3}}/>
-            ):null}
-          </div>
-          <div style={{fontSize:8,fontWeight:600,color:!bWins?"#374151":"#c4c8cd",width:10,textAlign:"center"}}>P</div>
-          <svg width="10" height="10" viewBox="0 0 12 12" style={{color:"#c4c8cd",flexShrink:0}}>
-            <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.2"/>
-            <text x="6" y="9" textAnchor="middle" fontSize="8" fill="currentColor" fontWeight="600">?</text>
-          </svg>
-        </div>
-        {showTip&&(
-          <div style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",background:"#1f2937",color:"#fff",fontSize:10,padding:"6px 10px",borderRadius:6,whiteSpace:"nowrap",zIndex:10,boxShadow:"0 4px 12px rgba(0,0,0,0.15)",marginTop:4}}>
-            <div style={{marginBottom:2,fontWeight:600}}>Challenge Edge</div>
-            <div style={{color:"#d1d5db"}}>{tipText}</div>
-            <div style={{position:"absolute",top:-4,left:"50%",transform:"translateX(-50%)",width:0,height:0,borderLeft:"4px solid transparent",borderRight:"4px solid transparent",borderBottom:"4px solid #1f2937"}}/>
-          </div>
-        )}
-      </div>
+      {analysis.swing!=null&&<div style={{fontSize:9,color:"#6b7280",textAlign:"center",marginTop:4,fontVariantNumeric:"tabular-nums"}}>Call worth {analysis.swing.toFixed(3)} R to whichever side it went against</div>}
     </div>
   );
 }
@@ -881,7 +866,7 @@ function ZoneCard({pitch,thresh,persp,interactive,onClickZone,onClear,sigma=1.0,
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}} title="Distance from nearest zone edge"><span style={{fontSize:9,color:"#9ca3af",fontWeight:600,cursor:"help"}}>DIST</span><span style={{fontSize:15,fontWeight:700,fontVariantNumeric:"tabular-nums",color:inside?green:Math.abs(dist)<1.5?"#d97706":red}}>{inside?`${Math.abs(dist).toFixed(1)}" in`:`${dist.toFixed(1)}" out`}</span></div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}} title={pitch.call==="strike"?"Confidence pitch was actually a ball":"Confidence pitch was actually a strike"}><span style={{fontSize:9,color:"#9ca3af",fontWeight:600,cursor:"help"}}>CONF</span><span style={{fontSize:15,fontWeight:700,fontVariantNumeric:"tabular-nums",color:conf>=thresh?green:"#374151"}}>{conf}%</span></div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}} title="Tango threshold for this count/bases/outs"><span style={{fontSize:9,color:"#9ca3af",fontWeight:600,cursor:"help"}}>NEED</span><span style={{fontSize:15,fontWeight:700,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{thresh}%</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}} title="Break-even for this game state: cost ÷ (call value + cost)"><span style={{fontSize:9,color:"#9ca3af",fontWeight:600,cursor:"help"}}>NEED</span><span style={{fontSize:15,fontWeight:700,color:"#374151",fontVariantNumeric:"tabular-nums"}}>{thresh}%</span></div>
               </div>
               <div style={{marginTop:6}} title={`Confidence ${conf}% vs ${thresh}% threshold`}>
                 <div style={{height:4,borderRadius:2,background:"#e5e7eb",position:"relative",overflow:"hidden"}}><div style={{height:"100%",borderRadius:2,width:`${Math.min(conf,100)}%`,background:shouldChallenge?green:"#9ca3af",transition:"width .3s ease"}}/></div>
@@ -1046,7 +1031,7 @@ function ZoneGraphic({pitchX,pitchZ,szTop=ZONE_TOP,szBot=ZONE_BOT}){
 }
 
 // ============================================================
-// TRAINING HELPERS — tug of war, intuition, RE ledger, mini zone
+// TRAINING HELPERS — both transitions, intuition, RE ledger, mini zone
 // ============================================================
 
 // Generate a plain-English sentence explaining why the break-even is what it is
@@ -1060,7 +1045,7 @@ function getBreakevenIntuition(scenario, perspective) {
   const isK = transition.to === "K";
 
   if (breakeven <= 25) {
-    if (isWalk) return `${basesDesc}, ${outs} out, full count — overturning means a walk${bases === "111" ? " and a run scores" : ""}. The ${absSwing} run swing makes almost any read worth it.`;
+    if (isWalk) return `${basesDesc}, ${outs} out — overturning means ball four${bases === "111" ? " and a run scores" : ""}. The ${absSwing} run swing makes almost any read worth it.`;
     if (isK) return `${basesDesc}, ${outs} out${outs === 2 ? " — overturning means a strikeout to end the inning" : ""} — ${absSwing} run swing. Challenge on a hunch.`;
     return `${basesDesc}, ${outs} out — the ${absSwing} run swing is so large that even low confidence justifies the challenge.`;
   }
@@ -1074,12 +1059,13 @@ function getBreakevenIntuition(scenario, perspective) {
   return `${basesDesc}, ${outs} out — a ${absSwing} run swing. The math leans toward challenging if your read says it was wrong.`;
 }
 
-// Compute both transitions for tug of war display on reveal
+// Compute both transitions for the reveal (same size, opposite sides)
 function getBothTransitions(scenario) {
   const trans = getTrans(scenario.count, scenario.outs, scenario.bases);
-  const cur = scenario.cur;
   const results = [];
   for (const t of trans) {
+    const cur = transCalledRE(t, scenario.count, scenario.outs, scenario.bases);
+    if (cur == null) continue;
     let cor;
     if (t.terminal) {
       if (t.newOuts >= 3) cor = 0;
@@ -1263,14 +1249,12 @@ function historicalToScenario(pitch, perspective) {
   const [b, s] = count.split("-").map(Number);
   const outs = pitch.outs;
   const bases = pitch.bases;
-  const thresh = getTangoThresh(bases, outs, b, s);
-  const tier = getTier(thresh);
   const trans = getTrans(count, outs, bases);
   const relevantType = perspective === "batter" ? "s2b" : "b2s";
   const transition = trans.find(t => t.type === relevantType);
   if (!transition) return null;
 
-  const cur = RE[outs]?.[bases]?.[count];
+  const cur = transCalledRE(transition, count, outs, bases);
   if (cur == null) return null;
   let cor;
   if (transition.terminal) {
@@ -1284,6 +1268,7 @@ function historicalToScenario(pitch, perspective) {
   const pD = perspective === "batter" ? deltaRE : -deltaRE;
   const breakeven = breakEven(pD, outsRemaining(pitch.inn, halfOf(pitch.isTop), outs), DEFAULT_CHAL_LEFT);
   const correctAction = zoneConf > 0 && zoneConf >= breakeven ? "challenge" : "accept";
+  const thresh = breakeven, tier = getTier(breakeven);
   return {
     count, outs, bases, pitchX: pitch.pitchX, pitchZ: pitch.pitchZ, szTop: pitch.szTop, szBot: pitch.szBot,
     zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor,
@@ -1318,23 +1303,10 @@ function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
   // where break-even and zone conf are likely to converge (mid-range thresholds)
   const useCoinFlipState = adaptiveMult !== null && difficulty >= 3 && Math.random() < 0.6;
 
-  const COIN_FLIP_POOL = [
-    // States where Tango threshold is 40-60% — genuine toss-ups
-    { count: "1-1", bases: "001", outs: 0 }, // 49%
-    { count: "2-1", bases: "010", outs: 1 }, // 40%
-    { count: "1-2", bases: "100", outs: 0 }, // 50%
-    { count: "0-1", bases: "110", outs: 1 }, // 49%
-    { count: "2-2", bases: "001", outs: 0 }, // 49%
-    { count: "1-1", bases: "011", outs: 1 }, // 43%
-    { count: "0-1", bases: "101", outs: 0 }, // 50%
-    { count: "2-1", bases: "111", outs: 1 }, // 36%
-    { count: "1-2", bases: "010", outs: 0 }, // 60%
-    { count: "0-0", bases: "001", outs: 1 }, // 57%
-  ];
 
   const gs = useCoinFlipState
-    ? COIN_FLIP_POOL[Math.floor(Math.random() * COIN_FLIP_POOL.length)]
-    : pickGameState(difficulty);
+    ? pickHighBarState()
+    : withGameClock(pickGameState(difficulty));
 
   // Generate pitch with tightened offsets
   const { pitchX, pitchZ } = generateAdaptivePitch(difficulty, adaptiveMult);
@@ -1342,14 +1314,12 @@ function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
   // Adaptive pitches are also generated against the default zone.
   const zoneConf = callWrongConfidence(pitchX, pitchZ, ZONE_TOP, ZONE_BOT, perspective);
   const [b, s] = gs.count.split("-").map(Number);
-  const thresh = getTangoThresh(gs.bases, gs.outs, b, s);
-  const tier = getTier(thresh);
   const trans = getTrans(gs.count, gs.outs, gs.bases);
   const relevantType = perspective === "batter" ? "s2b" : "b2s";
   const transition = trans.find(t => t.type === relevantType);
   if (!transition) return generateAdaptiveScenario(difficulty, perspective, recentHistory);
 
-  const cur = RE[gs.outs]?.[gs.bases]?.[gs.count];
+  const cur = transCalledRE(transition, gs.count, gs.outs, gs.bases);
   if (cur == null) return generateAdaptiveScenario(difficulty, perspective, recentHistory);
   let cor;
   if (transition.terminal) {
@@ -1363,6 +1333,7 @@ function generateAdaptiveScenario(difficulty, perspective, recentHistory) {
   const pD = perspective === "batter" ? deltaRE : -deltaRE;
   const breakeven = breakEven(pD, outsRemaining(gs.inn, halfOf(gs.isTop), gs.outs), gs.chalLeft);
   const correctAction = zoneConf > 0 && zoneConf >= breakeven ? "challenge" : "accept";
+  const thresh = breakeven, tier = getTier(breakeven);
   return { ...gs, pitchX, pitchZ, szTop: ZONE_TOP, szBot: ZONE_BOT, zoneConf, transition, thresh, tier, deltaRE, pD, breakeven, correctAction, cur, cor, adapted: adaptiveMult !== null, stand: Math.random() < 0.6 ? "R" : "L" };
 }
 
@@ -1447,13 +1418,11 @@ function TrainingMode(){
           const bases=p.preBases||"000";
           const zoneConf=callWrongConfidence(p.pX,p.pZ,p.szTop,p.szBot,perspective);
           const[b,s]=count.split("-").map(Number);
-          const thresh=getTangoThresh(bases,outs,b,s);
-          const tier=getTier(thresh);
           const trans=getTrans(count,outs,bases);
           const relevantType=perspective==="batter"?"s2b":"b2s";
           const transition=trans.find(t=>t.type===relevantType);
           if(!transition)return null;
-          const cur=RE[outs]?.[bases]?.[count];
+          const cur=transCalledRE(transition,count,outs,bases);
           if(cur==null)return null;
           let cor;
           if(transition.terminal){
@@ -1466,20 +1435,21 @@ function TrainingMode(){
           const deltaRE=cor-cur;
           const pD=perspective==="batter"?deltaRE:-deltaRE;
           const breakeven=breakEven(pD,outsRemaining(Number(p.inning)||1,halfOf(p.half),outs),DEFAULT_CHAL_LEFT);
-          const correctAction=zoneConf>=breakeven?"challenge":"accept";
+          const correctAction=zoneConf>0&&zoneConf>=breakeven?"challenge":"accept";
+          const thresh=breakeven,tier=getTier(breakeven);
           return{
             count,outs,bases,pitchX:p.pX,pitchZ:p.pZ,szTop:p.szTop,szBot:p.szBot,zoneConf,transition,thresh,tier,deltaRE,pD,breakeven,correctAction,cur,cor,
             batter:p.batter||null,pitcher:p.pitcher||null,type:p.type||null,speed:p.speed||null,call:p.call,
-            inn:p.inning?parseInt(p.inning):null,
+            inn:p.inning?parseInt(p.inning):null,isTop:halfOf(p.half)==="top",
           };
         }).filter(Boolean);
 
         // Auto-filter: keep pitches that are actually worth training on
         // Close call: zone confidence between 25-85% (not obvious either way)
-        // High leverage: break-even ≤ 40% (big run swing — worth challenging even on borderline read)
+        // High leverage: break-even ≤ 15% (big run swing for the time left — worth challenging on a borderline read)
         // If both filters together yield < 5 pitches, relax to top N by proximity to 50% confidence
         const isCloseCall = s => s.zoneConf >= 25 && s.zoneConf <= 85;
-        const isHighLeverage = s => s.breakeven <= 40;
+        const isHighLeverage = s => s.breakeven <= 15;
         let filtered = allScenarios.filter(s => isCloseCall(s) || isHighLeverage(s));
         if (filtered.length < 5 && allScenarios.length >= 5) {
           // Fallback: rank by how interesting the pitch is (proximity to 50% conf + low breakeven)
@@ -1995,15 +1965,13 @@ function TrainingMode(){
     const isTimeout=phase==="timeout";
     const elapsed=lastEntry?.elapsed||2000;
     const effective=lastEntry?.userAction||"accept";
-    const transLabel=scenario.transition.terminal?(scenario.transition.to==="BB"?"→ Walk":"→ Strikeout"):(`${scenario.transition.from} → ${scenario.transition.to}`);
+    const transLabel=scenario.transition.terminal?(scenario.transition.to==="BB"?"→ Walk":"→ Strikeout"):(`${scenario.transition.called} → ${scenario.transition.to}`);
     const intuition=getBreakevenIntuition(scenario,perspective);
     const bothTrans=getBothTransitions(scenario);
     const batterTrans=bothTrans.find(t=>t.type==="s2b");
     const catcherTrans=bothTrans.find(t=>t.type==="b2s");
     const bSwing=batterTrans?batterTrans.batterSwing:0;
     const cSwing=catcherTrans?catcherTrans.catcherSwing:0;
-    const swingTotal=bSwing+cSwing;
-    const bPct=swingTotal===0?50:(bSwing/swingTotal)*100;
     const reImpact=lastEntry?.reImpact||0;
 
     const gameOver=challengesLeft!==null&&challengesLeft<=0;
@@ -2075,28 +2043,20 @@ function TrainingMode(){
             );
           })()}
 
-          {/* Tug of war — both sides of the overturn */}
+          {/* Both sides of the overturn */}
           {batterTrans&&catcherTrans&&(
             <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
               <div style={{display:"flex",gap:0,alignItems:"stretch",marginBottom:4}}>
                 <div style={{flex:1,textAlign:"center",padding:"3px 6px"}}>
                   <div style={{fontSize:7,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Overturn strike</div>
-                  <div style={{fontSize:11,fontWeight:700,color:"#111827",marginTop:1}}>{batterTrans.from} → {batterTrans.terminal?batterTrans.to==="BB"?"Walk":"K":batterTrans.to}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#111827",marginTop:1}}>{batterTrans.called} → {batterTrans.to==="BB"?"Walk":batterTrans.to}</div>
                   <div style={{fontSize:9,color:"#6b7280"}}>{bSwing.toFixed(3)} runs</div>
                 </div>
                 <div style={{flex:1,textAlign:"center",padding:"3px 6px"}}>
                   <div style={{fontSize:7,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5}}>Overturn ball</div>
-                  <div style={{fontSize:11,fontWeight:700,color:"#111827",marginTop:1}}>{catcherTrans.from} → {catcherTrans.terminal?catcherTrans.to==="K"?"K":"Walk":catcherTrans.to}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#111827",marginTop:1}}>{catcherTrans.called==="BB"?"Walk":catcherTrans.called} → {catcherTrans.to}</div>
                   <div style={{fontSize:9,color:"#6b7280"}}>{cSwing.toFixed(3)} runs</div>
                 </div>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:4}}>
-                <div style={{fontSize:8,fontWeight:600,color:bPct>=50?"#374151":"#c4c8cd",width:14,textAlign:"center"}}>AB</div>
-                <div style={{flex:1,height:5,borderRadius:3,background:"#e5e7eb",overflow:"hidden",display:"flex"}}>
-                  <div style={{width:`${bPct}%`,background:bPct>=50?"#374151":"#c4c8cd",borderRadius:bPct>95?3:"3px 0 0 3px",transition:"width .3s ease"}}/>
-                  <div style={{width:`${100-bPct}%`,background:bPct<50?"#374151":"#c4c8cd",borderRadius:bPct<5?3:"0 3px 3px 0",transition:"width .3s ease"}}/>
-                </div>
-                <div style={{fontSize:8,fontWeight:600,color:bPct<50?"#374151":"#c4c8cd",width:10,textAlign:"center"}}>P</div>
               </div>
             </div>
           )}
@@ -2294,7 +2254,7 @@ function TrainingMode(){
 // ============================================================
 // MAIN
 // ============================================================
-const TABS=[{key:"simulator",label:"Simulator"},{key:"matrix",label:"RE Matrix"},{key:"thresholds",label:"Thresholds"},{key:"methodology",label:"Methodology"},{key:"training",label:"Training"}];
+const TABS=[{key:"simulator",label:"Simulator"},{key:"matrix",label:"RE Matrix"},{key:"thresholds",label:"Thresholds"},{key:"zones",label:"Zones"},{key:"methodology",label:"Methodology"},{key:"training",label:"Training"}];
 
 export default function App(){
   const[tab,setTab]=useState("simulator");
@@ -2484,7 +2444,7 @@ export default function App(){
     return null;
   },[mode,manualPitch,persp,livePitch,demoPlay,trackmanActive,tmPitch]);
 
-  // Context-dependent sigma via sigmaForMode: Hawk-Eye (live/signal/demo) σ=0.25,
+  // Context-dependent sigma via sigmaForMode: Hawk-Eye (live/signal/demo) σ=0.05,
   // Trackman (csv/ws/paste) σ=1.0, manual σ=1.0.
 
   // Use pre-pitch state for challenge analysis when we have pitch data
@@ -2518,7 +2478,8 @@ export default function App(){
       let cv;
       if(tr.terminal){cv=tr.newOuts>=3?0:(RE[tr.newOuts]?.[tr.newBases]?.["0-0"]??null);if(cv==null)return null;cv+=tr.runs;}
       else{cv=RE[o]?.[b]?.[tr.to];if(cv==null)return null;}
-      return Math.abs(cv-cur);})();
+      const called=transCalledRE(tr,c,o,b);if(called==null)return null;
+      return Math.abs(cv-called);})();
     const thresh=swing==null?50:breakEven(swing,outsRem,chalLeftEff);
     const tier=getTier(thresh);
     return{cur,thresh,tier,outsRem,chalLeftEff,swing,results:getTrans(c,o,b).map(t=>{
@@ -2531,16 +2492,12 @@ export default function App(){
       }else{
         cor=RE[o]?.[b]?.[t.to];if(cor===undefined)return null;
       }
-      const dRE=cor-cur;
+      const curT=transCalledRE(t,c,o,b);if(curT==null)return null;
+      const dRE=cor-curT;
       const adjRE=dRE*matchup.mult;
       const pD=persp==="offense"?adjRE:-adjRE;
-      // Compute the corrected-count threshold too
-      let toThresh=null,toTier=null;
-      if(!t.terminal){const[tb,ts]=t.to.split("-").map(Number);toThresh=getTangoThresh(b,o,tb,ts);toTier=getTier(toThresh);}
-      else if(t.to==="K"){toThresh=null;toTier=null;} // terminal — no further challenge
-      else if(t.to==="BB"){toThresh=null;toTier=null;}
       const transBE=breakEven(pD,outsRem,chalLeftEff);
-      return{...t,cur,cor,dRE,adjRE,pD,thresh,tier,toThresh,toTier,transBE,outsRem,chalLeftEff,rel:pD>0,mult:matchup.mult};
+      return{...t,cur:curT,cor,dRE,adjRE,pD,thresh,tier,transBE,outsRem,chalLeftEff,rel:pD>0,mult:matchup.mult};
     }).filter(Boolean)};
   },[activeCount,activeOuts,activeBs,persp,matchup,outsRem,chalLeftEff]);
 
@@ -3006,7 +2963,7 @@ export default function App(){
                         <div style={{fontSize:11,color:"#9ca3af"}}>No {persp==="offense"?"batting":"pitching"} challenge available this count</div>
                       </div>
                     );
-                    // Use Tango's raw threshold (not matchup-adjusted)
+                    // Break-even from the cost model (not matchup-adjusted)
                     const displayThresh=analysis.thresh;
                     const displayTier=analysis.tier;
                     return(
@@ -3172,19 +3129,19 @@ export default function App(){
                 thresh={analysis.thresh}
                 persp={persp}
                 sigma={sigmaForMode(mode,trackmanActive)}
-                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}
+                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeftEff,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}
                 interactive
                 onClickZone={(pX,pZ)=>setManualPitch({pX,pZ})}
                 onClear={()=>setManualPitch(null)}
               />}
-              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)} ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}/>}
+              {mode!=="manual"&&mode!=="signal"&&!(isLive&&trackmanActive)&&activePitch&&analysis&&<ZoneCard pitch={activePitch} thresh={analysis.thresh} persp={persp} sigma={sigmaForMode(mode,trackmanActive)} ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeftEff,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}/>}
               {/* Trackman paste/ws/csv-step zone card */}
               {isLive&&trackmanActive&&!(trackmanMethod==="csv"&&tmCsvView==="list")&&analysis&&<ZoneCard
                 pitch={activePitch}
                 thresh={analysis.thresh}
                 persp={persp}
                 sigma={sigmaForMode(mode,trackmanActive)}
-                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeft,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}
+                ctx={{count:activeCount,outs:activeOuts,bases:activeBs,outsRem,chalLeft:analysis.chalLeftEff,stake:analysis.swing,stand:activePitch?.stand||manualStand,blocked}}
                 interactive={trackmanMethod==="paste"}
                 onClickZone={trackmanMethod==="paste"?(pX,pZ)=>{
                   const szTop=parseFloat(tmPaste.szTop)||3.5,szBot=parseFloat(tmPaste.szBot)||1.6;
@@ -3230,10 +3187,19 @@ export default function App(){
 
         {tab==="matrix"&&<MatrixView {...{mOuts,setMOuts,mView,setMView}} seg={(active)=>({padding:"5px 14px",borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"})}/>}
         {tab==="thresholds"&&<ThresholdMatrix/>}
+        {tab==="zones"&&<ZoneView/>}
         {tab==="methodology"&&<Methodology/>}
         {tab==="training"&&<TrainingMode/>}
       </div>
-    </div>
+    
+        <div style={{marginTop:24,paddingTop:10,borderTop:"1px solid #e5e7eb",fontSize:10,color:"#9ca3af",fontFamily:"'SF Mono',Menlo,monospace",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span>Built by <a href="https://x.com/sdmiddlecamp" target="_blank" rel="noopener noreferrer" style={{color:"#374151",fontWeight:600,textDecoration:"none"}}>Scott Middlecamp</a></span>
+          <span style={{color:"#d1d5db"}}>·</span>
+          <a href="https://github.com/sdm-commits/" target="_blank" rel="noopener noreferrer" style={{color:"#6b7280",textDecoration:"none"}}>GitHub</a>
+          <span style={{color:"#d1d5db"}}>·</span>
+          <span>cost model after <a href="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league" target="_blank" rel="noopener noreferrer" style={{color:"#6b7280",textDecoration:"none"}}>Tango</a></span>
+        </div>
+      </div>
   );
 }
 
@@ -3257,7 +3223,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     // Each CSV row carries its own inning.
     const trans=getTrans(c,o,b);
     const trRel=row.call==="ball"?trans.find(t=>t.type==="b2s"):trans.find(t=>t.type==="s2b");
-    const swing=(()=>{if(!trRel)return null;const cv0=RE[o]?.[b]?.[c];if(cv0==null)return null;
+    const swing=(()=>{if(!trRel)return null;const cv0=transCalledRE(trRel,c,o,b);if(cv0==null)return null;
       let cv;
       if(trRel.terminal){cv=trRel.newOuts>=3?0:(RE[trRel.newOuts]?.[trRel.newBases]?.["0-0"]??null);if(cv==null)return null;cv+=trRel.runs;}
       else{cv=RE[o]?.[b]?.[trRel.to];if(cv==null)return null;}
@@ -3266,7 +3232,7 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
     const relevantTrans=row.call==="ball"?trans.find(t=>t.type==="b2s"):trans.find(t=>t.type==="s2b");
     let dRE=null;
     if(relevantTrans){
-      const cur=RE[o][b][c];
+      const cur=transCalledRE(relevantTrans,c,o,b);
       let cor;
       if(relevantTrans.terminal){
         if(relevantTrans.newOuts>=3)cor=0;
@@ -3277,15 +3243,14 @@ function CsvListView({data,selectedIdx,onSelect,persp,tmCount,tmOuts,tmBases,sor
       }
       if(cor!=null&&cur!=null)dRE=Math.abs(cor-cur);
     }
-    const MARGIN=15;
+    // CLOSE only when confidence sits within 5 points of the bar; otherwise the same rule as the zone card.
     const gap=conf-thresh;
     let verdict;
     if(!canChallenge)verdict="—";
-    else if(gap>=MARGIN)verdict="CHALLENGE";
-    else if(gap<=-MARGIN)verdict="HOLD";
-    else verdict="CLOSE";
+    else if(Math.abs(gap)<5&&conf>0)verdict="CLOSE";
+    else verdict=conf>0&&conf>=thresh?"CHALLENGE":"HOLD";
     return{...row,idx:i,verdict,conf,dRE,thresh,canChallenge};
-  }),[data,persp,tmCount,tmOuts,tmBases,sigma]);
+  }),[data,persp,tmCount,tmOuts,tmBases]);
 
   const sorted=useMemo(()=>{
     if(!sort)return rows;
@@ -3366,7 +3331,7 @@ function ChallengeCard({r,persp,mode}){
         <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
           {/* Called → Corrected */}
           <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:"#f9fafb",borderRadius:8,padding:"8px 10px"}}>
-            <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Called</div><Dots count={r.from} sm/></div>
+            <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Called</div>{["K","BB"].includes(r.called)?<div style={{fontSize:13,fontWeight:700,color:r.called==="BB"?green:red,padding:"2px 0"}}>{r.called}</div>:<Dots count={r.called} sm/>}</div>
             <div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>→</div>
             <div style={{textAlign:"center",minWidth:48}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Corrected</div>{r.terminal?<div style={{fontSize:13,fontWeight:700,color:r.to==="BB"?green:red,padding:"2px 0"}}>{r.to}</div>:<Dots count={r.to} sm/>}</div>
             <div style={{flex:1}}/>
@@ -3392,25 +3357,29 @@ function ChallengeCard({r,persp,mode}){
       {open&&(
         <div style={{borderTop:"1px solid #f3f4f6",padding:"12px 14px"}}>
           <div style={{display:"flex",alignItems:"center",gap:12,background:"#f9fafb",borderRadius:8,padding:12}}>
-            <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Called</div><Dots count={r.from} sm/><div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cur)}</div></div>
+            <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Called</div>{["K","BB"].includes(r.called)?<div style={{fontSize:13,fontWeight:700,color:r.called==="BB"?green:red,padding:"2px 0"}}>{r.called}</div>:<Dots count={r.called} sm/>}<div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cur)}</div></div>
             <div style={{fontSize:16,color:"#d1d5db",flexShrink:0}}>→</div>
             <div style={{textAlign:"center",minWidth:55}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Corrected</div>{r.terminal?<div style={{fontSize:14,fontWeight:700,color:r.to==="BB"?green:red,padding:"4px 0"}}>{r.to}</div>:<Dots count={r.to} sm/>}<div style={{fontSize:15,fontWeight:700,color:"#111827",marginTop:4,fontVariantNumeric:"tabular-nums"}}>{fmt(r.cor)}</div></div>
             <div style={{flex:1}}/>
             <div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Raw ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.dRE>0?green:r.dRE<0?red:"#6b7280"}}>{r.dRE>0?"+":""}{fmt(r.dRE)}</div></div>
             {r.mult!==1&&<><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>×</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Matchup</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:mpct>0?green:mpct<0?red:"#6b7280"}}>{r.mult.toFixed(2)}×</div></div><div style={{fontSize:14,color:"#d1d5db",flexShrink:0}}>=</div><div style={{textAlign:"center"}}><div style={{fontSize:8,fontWeight:600,color:"#9ca3af",textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Adj ΔRE</div><div style={{fontSize:18,fontWeight:700,fontVariantNumeric:"tabular-nums",color:r.pD>0?green:r.pD<0?red:"#6b7280"}}>{r.pD>0?"+":""}{fmt(r.pD)}</div></div></>}
           </div>
-          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>This transition break-even: {r.transBE}% <span style={{color:"#c4c8cd"}}>·</span> 0.20 cost ÷ ({fmt(Math.abs(r.pD))} swing + 0.20 cost){"\n"}Tango game-state threshold: {r.thresh}% <span style={{color:"#c4c8cd"}}>·</span> published lookup for this count/bases/outs</div>
+          <div style={{fontSize:10,color:"#9ca3af",marginTop:8}}>This transition break-even: {r.transBE}% <span style={{color:"#c4c8cd"}}>·</span> {fmt(chalCost(r.outsRem,r.chalLeftEff))} cost ÷ ({fmt(Math.abs(r.pD))} swing + {fmt(chalCost(r.outsRem,r.chalLeftEff))} cost) <span style={{color:"#c4c8cd"}}>·</span> {r.outsRem} outs left, {r.chalLeftEff} in hand</div>
         </div>
       )}
     </div>
   );
 }
 
+// Break-even color scale, shared by every break-even number and the Thresholds table.
+// Pivots at 25% (the top of the "Challenge" tier): blue below, red above, full red by 75%.
+const BAR_PIVOT=25;
+const barT=(v)=>v<BAR_PIVOT?Math.min((BAR_PIVOT-v)/BAR_PIVOT,1):Math.min((v-BAR_PIVOT)/50,1);
 function ConfidenceNum({thresh}){
   // Same palette as RE matrix: rgb(214,48,49) red, rgb(33,102,172) blue
-  const t=Math.min(Math.abs(thresh-50)/40,1);
-  const warm=thresh>52;
-  const cool=thresh<48;
+  const t=barT(thresh);
+  const warm=thresh>BAR_PIVOT+2;
+  const cool=thresh<BAR_PIVOT-2;
   const color=warm?`rgb(${Math.round(55+(214-55)*t)},${Math.round(65-(65-48)*t)},${Math.round(81-(81-49)*t)})`
     :cool?`rgb(${Math.round(55-(55-33)*t)},${Math.round(65+(102-65)*t)},${Math.round(81+(172-81)*t)})`
     :"#374151";
@@ -3457,9 +3426,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
                     const rvMn=Math.min(...rvAll),rvMx=Math.max(...rvAll);
                     return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:c==="0-0"?"#f9fafb":heatColor((rv-rvMn)/(rvMx-rvMn)*(mx-mn)+mn,mn,mx),color:c==="0-0"?"#9ca3af":heatText((rv-rvMn)/(rvMx-rvMn)*(mx-mn)+mn,mn,mx),fontVariantNumeric:"tabular-nums"}}>{c==="0-0"?"—":`${rv>0?"+":""}${rv.toFixed(2)}`}</td>);
                   }
-                  const[bl,st]=c.split("-").map(Number);let d=null;
-                  if(st+1<=2){const nc=`${bl}-${st+1}`;const nr=data[b.key][nc];if(nr!==undefined)d=nr-re;}
-                  else if(st===2){/* b2s on x-2 = strikeout */const newOuts=mOuts+1;d=newOuts>=3?-re:(RE[newOuts]?.[b.key]?.["0-0"]??re)-re;}
+                  const sw=callSwing(b.key,mOuts,...c.split("-").map(Number));const d=sw==null?null:-sw;
                   return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:dColor(d),color:d!=null?dText(d):"#d1d5db",fontVariantNumeric:"tabular-nums"}}>{d!=null?`${d>0?"+":""}${d.toFixed(2)}`:"—"}</td>);
                 })}
               </tr>
@@ -3467,7 +3434,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?"Expected runs from this state through end of half-inning. Blue = pitcher-favorable, Red = hitter-favorable.":mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count. Note: 3-2 is the only count that switches — it is a hitter's count in most states but becomes a pitcher's count with runners on 2nd & 3rd (the walk/strikeout outcome probabilities interact differently depending on the base-out state).":"RE change if the next pitch is called a ball but overturned to a strike. Blue = favors defense, Red = favors offense."}</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?"Expected runs from this state through end of half-inning. Blue = pitcher-favorable, Red = hitter-favorable.":mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count.":"Run value of a ball overturned to a strike: RE if the pitch is a strike minus RE if it is a ball, from this count (strike three and ball four included). A strike overturned to a ball is the same size with the sign flipped. Blue = favors defense."}</p>
     </div>
   );
 }
@@ -3475,31 +3442,200 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
 // ============================================================
 // THRESHOLD MATRIX
 // ============================================================
+// ============================================================
+// ZONES — where each catcher / club challenges missed calls
+// Data: public/zones/*.json from analysis/q57 (KDE + ring), totals reconciled to Savant's leaderboard.
+// ============================================================
+const ZV_RINGS=["in 1.5+","in 0.5-1.5","in 0-0.5","out 0-0.5","out 0.5-1.5","out 1.5+"];
+const ZV_JET=[[0,0,.5],[0,0,1],[0,.5,1],[0,1,1],[.5,1,.5],[1,1,0],[1,.5,0],[1,0,0],[.5,0,0]];
+const ZV_DIV=[[.02,.19,.38],[.26,.58,.76],[.97,.97,.97],[.84,.38,.30],[.40,0,.05]];
+const ZV_ME_FLOOR=5,ZV_LG_FLOOR=15;
+const zvRamp=(stops,t)=>{t=Math.max(0,Math.min(1,t))*(stops.length-1);const i=Math.min(Math.floor(t),stops.length-2),f=t-i;return stops[i].map((c,k)=>Math.round(255*(c*(1-f)+stops[i+1][k]*f)));};
+const zvCss=rgb=>`rgb(${rgb.join(",")})`;
+const zvSgn=(v,d=2)=>{const r=+v.toFixed(d);return(r>0?"+":r<0?"−":"")+Math.abs(r).toFixed(d);};
+
+function zoneRingSvg(D,V,mode){
+  const cat=D.side==="catcher",R=V.rings,flip=V.flip;
+  const core=[72,78],step=25,rect=i=>i<0?[0,0]:[core[0]+i*step,core[1]+i*step];
+  const PP=(hw,hh)=>({tl:[-hw,-hh],tr:[hw,-hh],br:[hw,hh],bl:[-hw,hh]});
+  const me={},lg={};
+  for(const[k,[v,n]]of Object.entries(R.meShare))if(n>=ZV_ME_FLOOR)me[k]=[v,n];
+  for(const[k,[v,n]]of Object.entries(R.lgShare))if(n>=ZV_LG_FLOOR)lg[k]=[v,n];
+  const center=V.lgShare;
+  const smax=Math.max(0.1,...Object.values(me).map(x=>Math.abs(x[0]-center)),...Object.values(lg).map(x=>Math.abs(x[0]-center)));
+  const diff={};for(const k of Object.keys(me))if(lg[k])diff[k]=me[k][0]-lg[k][0];
+  const dmax=Math.max(0.15,...Object.values(diff).map(Math.abs));
+  const who=cat?"catcher":"club";
+  let s="";
+  ZV_RINGS.forEach((band,i)=>{
+    const a=PP(...rect(i-1)),b=PP(...rect(i));
+    const right=[b.tr,b.br,a.br,a.tr],left=[b.bl,b.tl,a.tl,a.bl];
+    const polys={top:[b.tl,b.tr,a.tr,a.tl],outside:flip?left:right,bottom:[b.br,b.bl,a.bl,a.br],inside:flip?right:left};
+    for(const[ed,pts]of Object.entries(polys)){
+      const k=`${ed}|${band}`,P=pts.map(p=>p.join(",")).join(" ");
+      const missBand=D.missBands.includes(band);
+      let fill="#f3f4f6",op=1,lab=null,strong=false,tip="";
+      if(mode==="diff"&&k in diff){const v=diff[k];fill=v>=0?"#16a34a":"#dc2626";op=Math.min(.85,.05+Math.abs(v)/dmax*.8);lab=zvSgn(v*100,0);strong=Math.abs(v)>=dmax*.55;tip=`${who} ${Math.round(me[k][0]*100)}% of ${me[k][1]} · league ${Math.round(lg[k][0]*100)}%`;}
+      else if(mode!=="diff"&&k in(mode==="me"?me:lg)){const[v,n]=(mode==="me"?me:lg)[k];const dv=v-center;fill=dv>=0?"#16a34a":"#dc2626";op=Math.min(.85,.05+Math.abs(dv)/smax*.8);lab=`${Math.round(v*100)}%`;strong=Math.abs(dv)>=smax*.55;tip=`${Math.round(v*100)}% of ${n} missed calls`;}
+      else if(missBand)tip=mode==="lg"?"too few missed calls":`fewer than ${ZV_ME_FLOOR} missed calls`;
+      s+=`<polygon points="${P}" fill="${fill}" fill-opacity="${op}" stroke="#fff" stroke-width="1.5"><title>${tip}</title></polygon>`;
+      const mx=pts.reduce((t,p)=>t+p[0],0)/4,my=pts.reduce((t,p)=>t+p[1],0)/4;
+      const rot=ed==="inside"||ed==="outside"?` transform="rotate(-90 ${mx} ${my})"`:"";
+      if(lab)s+=`<text x="${mx}" y="${my}" dy="0.35em" text-anchor="middle" font-family="SF Mono, ui-monospace, monospace" font-size="11" font-weight="${strong?700:500}" fill="#111827" pointer-events="none"${rot}>${lab}</text>`;
+      else if(missBand)s+=`<text x="${mx}" y="${my}" dy="0.35em" text-anchor="middle" font-size="11" fill="#9ca3af" pointer-events="none"${rot}>–</text>`;
+    }
+  });
+  const[hw,hh]=rect(2),[ow,oh]=rect(5);
+  s+=`<rect x="${-hw}" y="${-hh}" width="${2*hw}" height="${2*hh}" fill="none" stroke="#1f2937" stroke-width="2.2"/>`;
+  const lab=(x,y,t,r)=>`<text x="${x}" y="${y}" text-anchor="middle" font-size="12" font-weight="600" fill="#6b7280"${r?` transform="rotate(-90 ${x} ${y})"`:""}>${t}</text>`;
+  const[L,Rr]=flip?["outside","inside"]:["inside","outside"];
+  s+=lab(0,-oh-10,"top")+lab(0,oh+20,"bottom")+lab(-ow-12,0,L,1)+lab(ow+20,0,Rr,1);
+  return{svg:s,center,smax,who};
+}
+
+function ZoneView(){
+  const[index,setIndex]=useState(null);
+  const[side,setSide]=useState("catcher");
+  const[pick,setPick]=useState(null);
+  const[D,setD]=useState(null);
+  const[hand,setHand]=useState(0);
+  const[layer,setLayer]=useState("fire");
+  const[who,setWho]=useState("me");
+  const[err,setErr]=useState(null);
+  const cvRef=useRef(null);
+  const getJson=url=>fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();});
+  useEffect(()=>{getJson("/zones/index.json").then(ix=>{setIndex(ix);setPick(ix.catchers[0]?.id??null);}).catch(()=>setErr("Zone data not found."));},[]);
+  useEffect(()=>{
+    if(!pick)return;let live=true;setD(null);setErr(null);
+    getJson(`/zones/${side}_${pick}.json`).then(d=>{if(live){setD(d);setHand(0);}}).catch(()=>{if(live)setErr("Could not load this zone file.");});
+    return()=>{live=false;};
+  },[side,pick]);
+  const V=D?.views?.[hand];
+  const cat=D?.side==="catcher";
+  useEffect(()=>{
+    if(!V||!cvRef.current)return;
+    const g=V.kde[layer][who],n=61,ctx=cvRef.current.getContext("2d"),img=ctx.createImageData(n,n);
+    const vmax=who==="diff"?Math.max(...g.map(Math.abs))||1:Math.max(...V.kde[layer].me,...V.kde[layer].lg)||1;
+    for(let r=0;r<n;r++)for(let c=0;c<n;c++){const v=g[r*n+c],o=((n-1-r)*n+c)*4;const rgb=who==="diff"?zvRamp(ZV_DIV,(v/vmax+1)/2):zvRamp(ZV_JET,v/vmax);img.data.set([...rgb,255],o);}
+    ctx.putImageData(img,0,0);
+  },[V,layer,who]);
+  const seg=(active)=>({padding:"5px 10px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",fontFamily:"inherit"});
+  const eb={fontSize:8,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5};
+  const stat=(label,val,col,note)=>(<div style={{background:"#f6f7f8",borderRadius:6,padding:"6px 8px",textAlign:"center"}}><div style={eb}>{label}</div><div style={{fontSize:15,fontWeight:700,color:col||"#111827",fontVariantNumeric:"tabular-nums",marginTop:2}}>{val}</div>{note&&<div style={{fontSize:9,color:"#6b7280",marginTop:1}}>{note}</div>}</div>);
+  if(err&&!index)return<div style={{padding:20,color:"#6b7280",fontSize:13}}>{err}</div>;
+  if(!index)return<div style={{padding:20,color:"#9ca3af",fontSize:13}}>Loading zones…</div>;
+  const lastName=n=>n.split(" ").slice(-1)[0];
+  const list=side==="catcher"?[...index.catchers].sort((a,b)=>lastName(a.name).localeCompare(lastName(b.name),"en",{sensitivity:"base"})||a.name.localeCompare(b.name,"en",{sensitivity:"base"})):index.clubs;
+  const Sv=D?.savant;
+  let zoneSvg="",ring=null,vmaxLeg=1;
+  if(D&&V){
+    const X=x=>(x+2)*100,Z=z=>(4.5-z)*100,hw=D.zone.halfWidthFt,dark=who!=="diff";
+    zoneSvg=`<rect x="${X(-hw)}" y="${Z(D.zone.top)}" width="${2*hw*100}" height="${(D.zone.top-D.zone.bot)*100}" fill="none" stroke="#111827" stroke-width="3"/>`+
+      `<path d="M${X(-hw)},${Z(0.78)} H${X(hw)} V${Z(0.70)} L${X(0)},${Z(0.62)} L${X(-hw)},${Z(0.70)} Z" fill="#fff" stroke="#111827" stroke-width="1.5"/>`+
+      `<text x="8" y="392" font-size="13" font-weight="600" fill="${dark?"#fff":"#374151"}">${cat?"Inside":V.flip?"Outside":"Inside"}</text>`+
+      `<text x="392" y="392" font-size="13" font-weight="600" fill="${dark?"#fff":"#374151"}" text-anchor="end">${cat?"Outside":V.flip?"Inside":"Outside"}</text>`;
+    ring=zoneRingSvg(D,V,who);
+    const g=V.kde[layer][who];vmaxLeg=who==="diff"?Math.max(...g.map(Math.abs))||1:Math.max(...V.kde[layer].me,...V.kde[layer].lg)||1;
+  }
+  const whoTxt={me:cat?"Catcher":"Club",lg:"League-average "+(cat?"catcher":"club"),diff:"Difference vs league"}[who];
+  return(
+    <div>
+      <div className="mx-controls" style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:3}}>{[["catcher","Catchers"],["hitter","Hitters (club)"]].map(([k,l])=><button key={k} onClick={()=>{setSide(k);setPick((k==="catcher"?index.catchers:index.clubs)[0]?.id);}} style={seg(side===k)}>{l}</button>)}</div>
+        <select value={pick||""} onChange={e=>setPick(e.target.value)} style={{fontSize:12,padding:"5px 8px",borderRadius:6,border:"1px solid #e5e7eb",fontFamily:"inherit",color:"#111827",background:"#fff",maxWidth:"100%"}}>
+          {list.map(x=><option key={x.id} value={x.id}>{side==="catcher"?`${x.name} (${x.team})`:x.name}  {zvSgn(x.runsAboveAvg)} R</option>)}
+        </select>
+      </div>
+      {err?<div style={{padding:20,color:"#6b7280",fontSize:13}}>{err}</div>:!D||!V?<div style={{padding:20,color:"#9ca3af",fontSize:13}}>Loading…</div>:(
+      <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:14}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:16,fontWeight:700,color:"#111827"}}>{cat?D.name:`${D.name} hitters`}</span>
+          <span style={{fontSize:11,color:"#6b7280"}}>{D.season} · {cat?`${D.team} · catcher side: strikes called balls`:"hitter side: balls called strikes"}</span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:6,margin:"10px 0 12px"}}>
+          {stat("Missed calls",Sv.misses,null,"with a challenge in hand")}
+          {stat("Overturned",Sv.overturns,null,`of ${Sv.challenges} challenges`)}
+          {stat("Share overturned",`${Math.round(Sv.share*100)}%`,Sv.share>=Sv.lgShare?"#16a34a":"#dc2626",`league ${Math.round(Sv.lgShare*100)}%`)}
+          {stat("Runs vs avg",`${zvSgn(Sv.runsAboveAvg)} R`,Sv.runsAboveAvg>=0?"#16a34a":"#dc2626","Savant, Probably-Right")}
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+          {D.views.length>1&&<div style={{display:"flex",gap:3}}>{D.views.map((v,i)=><button key={i} onClick={()=>setHand(i)} style={seg(hand===i)}>{v.label==="Right-handed batters"?"RHB":v.label==="Left-handed batters"?"LHB":v.label}</button>)}</div>}
+          <div style={{display:"flex",gap:3}}>{[["fire","Challenged"],["left","Not challenged"]].map(([k,l])=><button key={k} onClick={()=>setLayer(k)} style={seg(layer===k)}>{l}</button>)}</div>
+          <div style={{display:"flex",gap:3}}>{[["me",cat?"Catcher":"Club"],["lg","League avg"],["diff","Difference"]].map(([k,l])=><button key={k} onClick={()=>setWho(k)} style={seg(who===k)}>{l}</button>)}</div>
+        </div>
+        {D.views.length>1&&<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {V.misses} missed calls, {V.fired} challenged, {zvSgn(V.runsTotal)} R of the club's {zvSgn(Sv.runsAboveAvg)} R</div>}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(280px,100%),1fr))",gap:12,alignItems:"start"}}>
+          <div style={{border:"1px solid #e5e7eb",borderRadius:8,padding:8}}>
+            <div style={{...eb,color:"#9ca3af",marginBottom:6}}>{whoTxt} · missed calls {layer==="fire"?"challenged":"not challenged"} · per game</div>
+            <div style={{position:"relative",width:"100%",aspectRatio:"1/1",overflow:"hidden"}}>
+              <canvas ref={cvRef} width={61} height={61} style={{position:"absolute",left:"-0.8197%",top:"-0.8197%",width:"101.6393%",height:"101.6393%"}}/>
+              <svg viewBox="0 0 400 400" style={{position:"absolute",inset:0,width:"100%",height:"100%"}} dangerouslySetInnerHTML={{__html:zoneSvg}}/>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,fontSize:9,color:"#6b7280"}}>
+              {who==="diff"?<><span>league more</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.25,.5,.75,1].map(t=>zvCss(zvRamp(ZV_DIV,t))).join(",")})`}}/><span>{cat?"catcher":"club"} more</span></>
+                :<><span>0</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.125,.25,.375,.5,.625,.75,.875,1].map(t=>zvCss(zvRamp(ZV_JET,t))).join(",")})`}}/><span>{vmaxLeg.toFixed(2)} / game / sq ft</span></>}
+            </div>
+          </div>
+          <div style={{border:"1px solid #e5e7eb",borderRadius:8,padding:8}}>
+            <div style={{...eb,color:"#9ca3af",marginBottom:6}}>{{me:`Share of missed calls challenged · ${ring.who} (${Math.round(V.share*100)}%)`,lg:`Share of missed calls challenged · league avg (${Math.round(V.lgShare*100)}%)`,diff:`Share challenged · ${ring.who} minus league (${zvSgn((V.share-V.lgShare)*100,0)} pts)`}[who]}</div>
+            <svg viewBox="-240 -250 480 500" style={{width:"100%",display:"block"}} dangerouslySetInnerHTML={{__html:ring.svg}}/>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,fontSize:9,color:"#6b7280"}}>
+              {who==="diff"?<span>league more</span>:<span>{Math.max(0,Math.round((ring.center-ring.smax)*100))}%</span>}
+              <div style={{flex:1,height:6,borderRadius:3,background:"linear-gradient(90deg,#dc2626,#fef2f2,#f0fdf4,#16a34a)"}}/>
+              {who==="diff"?<span>{ring.who} more</span>:<span>{Math.round((ring.center+ring.smax)*100)}% · centre = league {Math.round(ring.center*100)}%</span>}
+            </div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center",marginTop:8}}>
+              <span style={{...eb,marginRight:2}}>{ring.who} runs vs avg by edge</span>
+              {["top","bottom","inside","outside"].map(ed=>{const v=V.rings.runsEdge[ed]??0,pos=v>=0;return<span key={ed} style={{fontSize:10,fontWeight:700,fontVariantNumeric:"tabular-nums",color:pos?"#16a34a":"#dc2626",background:pos?"#f0fdf4":"#fef2f2",border:`1px solid ${pos?"#bbf7d0":"#fecaca"}`,borderRadius:4,padding:"1px 5px"}}>{ed} {zvSgn(v)}</span>;})}
+            </div>
+            <div style={{fontSize:9,color:"#9ca3af",marginTop:4}}>– = fewer than {ZV_ME_FLOOR} {ring.who} / {ZV_LG_FLOOR} league missed calls in the cell · hover a cell for counts</div>
+          </div>
+        </div>
+        <p style={{fontSize:10,color:"#9ca3af",lineHeight:1.6,margin:"10px 0 0"}}>
+          Headline numbers are Baseball Savant's ABS challenge leaderboard (2026 regular season{cat?"; catcher side, pitcher-initiated challenges excluded":""}). Runs vs avg is Savant's runs above average: runs won on overturns minus the cost of lost challenges, against an average challenger on the same pitches.
+          The heatmap, ring and edge runs split those totals by location from our per-pitch rebuild, scaled so the edges sum to Savant's figure; ring and heatmap miss counts come from our own pitch-level calls and can differ from Savant's by up to about 10.
+          Catcher's view{cat?", batter-relative (inside on the left)":V.flip?" (a lefty's inside edge is on the right)":""}; height scaled to the average ABS zone ({D.zone.bot.toFixed(2)}–{D.zone.top.toFixed(2)} ft). Heatmap = Gaussian KDE of missed calls per game; league = all other {cat?"catchers":"clubs"}, per {cat?"catcher":"club"}-game.
+          Ring bands from the middle out: 1.5+ / 0.5–1.5 / 0–0.5 in. inside the ABS line (black box), then 0–0.5 / 0.5–1.5 / 1.5+ in. outside. {cat?`Catchers with ${index.minGames}+ games.`:""}
+        </p>
+      </div>)}
+    </div>
+  );
+}
+
+// Run swing of the call: RE if the pitch is a ball minus RE if it is a strike, from the
+// pre-pitch state. Same magnitude whichever way the umpire called it.
+function callSwing(bases,outs,b,s){
+  const c=`${b}-${s}`,ball=outcomeRE(bases,outs,c,"ball"),strike=outcomeRE(bases,outs,c,"strike");
+  return ball==null||strike==null?null:ball-strike;
+}
 function ThresholdMatrix(){
   const[tOuts,setTOuts]=useState(0);
+  const[tInn,setTInn]=useState(1);
+  const[tHalf,setTHalf]=useState("top");
+  const[tChal,setTChal]=useState(2);
   const seg=(active)=>({padding:"5px 14px",borderRadius:7,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",transition:"all .15s",fontFamily:"inherit"});
-  // Color: same as ConfidenceNum — red(high,challenge) → black(mid) → blue(low,hold)
-  const threshColor=(v)=>{
-    const t=Math.min(Math.abs(v-50)/40,1);
-    if(v>52)return`rgb(${Math.round(55+(214-55)*t)},${Math.round(65-(65-48)*t)},${Math.round(81-(81-49)*t)})`;
-    if(v<48)return`rgb(${Math.round(55-(55-33)*t)},${Math.round(65+(102-65)*t)},${Math.round(81+(172-81)*t)})`;
-    return"#374151";
-  };
-  // Background: same dColor gradient as RE matrix
+  const segSm=(active)=>({...seg(active),padding:"5px 9px"});
+  const PIVOT=BAR_PIVOT,tOf=barT;
   const threshBg=(v)=>{
-    const t=Math.min(Math.abs(v-50)/45,1);
-    if(v>=50)return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`;
+    const t=tOf(v);
+    if(v>=PIVOT)return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`;
     return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;
   };
-  const threshText=(v)=>{const t=Math.min(Math.abs(v-50)/45,1);return t>0.55?"#fff":t>0.3?"#374151":"#374151";};
+  const threshText=(v)=>tOf(v)>0.55?"#fff":"#374151";
+  const outsRem=outsRemaining(tInn,tHalf,tOuts);
+  const cost=chalCost(outsRem,tChal);
   return(
     <div>
       <div className="mx-controls" style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Inning</span><div style={{display:"flex",gap:3}}>{[1,2,3,4,5,6,7,8,9].map(i=><button key={i} onClick={()=>setTInn(i)} style={segSm(tInn===i)}>{i}</button>)}</div></div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{display:"flex",gap:3}}>{[["top","Top"],["bottom","Bot"]].map(([k,l])=><button key={k} onClick={()=>setTHalf(k)} style={segSm(tHalf===k)}>{l}</button>)}</div></div>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Outs</span><div style={{display:"flex",gap:3}}>{[0,1,2].map(o=><button key={o} onClick={()=>setTOuts(o)} style={seg(tOuts===o)}>{o}</button>)}</div></div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Challenges left</span><div style={{display:"flex",gap:3}}>{[2,1].map(c=><button key={c} onClick={()=>setTChal(c)} style={seg(tChal===c)}>{c}</button>)}</div></div>
         <div style={{flex:1}}/>
         <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>Challenge</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
           <span>Hold</span></div>
       </div>
+      <div style={{fontSize:11,color:"#6b7280",margin:"0 4px 8px",fontVariantNumeric:"tabular-nums"}}>{outsRem} outs left in the game · a lost challenge costs {cost.toFixed(3)} R</div>
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
@@ -3512,15 +3648,17 @@ function ThresholdMatrix(){
                 <td style={{padding:"5px 10px",fontSize:12,fontWeight:500,color:"#374151",borderBottom:"1px solid #f3f4f6",background:ri%2?"#f9fafb":"#fff",position:"sticky",left:0,zIndex:1,whiteSpace:"nowrap"}}><div style={{display:"flex",alignItems:"center",gap:5}}><Diamond bs={b.key} size={18}/><span>{b.label==="---"?"Empty":b.label}</span></div></td>
                 {COUNTS.map(c=>{
                   const[bl,st]=c.split("-").map(Number);
-                  const v=getTangoThresh(b.key,tOuts,bl,st);
-                  return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:threshBg(v),color:threshText(v),fontVariantNumeric:"tabular-nums"}}>{v}%</td>);
+                  const sw=callSwing(b.key,tOuts,bl,st);
+                  if(sw==null)return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,color:"#d1d5db",borderBottom:"1px solid #f3f4f6"}}>—</td>);
+                  const v=breakEven(sw,outsRem,tChal);
+                  return(<td key={c} title={`Call worth ${Math.abs(sw).toFixed(3)} R · cost ${cost.toFixed(3)} R`} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:threshBg(v),color:threshText(v),fontVariantNumeric:"tabular-nums"}}>{v}%</td>);
                 })}
               </tr>
             ))}</tbody>
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Reference only — Tango's published Feb 2025 table, fit on AAA data. The engine no longer uses it; thresholds now come from the cost model, which is outs-aware and runs far lower. Blue = low bar, challenge-friendly — even a small hunch is enough. Red = high bar, hold unless certain.</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Confidence needed to challenge, from the engine's cost model: break-even = cost / (call value + cost). Call value is the run swing between ball and strike in this count and base-out state (2026 RE288); the same number applies to a called ball or a called strike. Cost is 0.001 R per out left in the game while holding two challenges, 0.003 with the last one, so every cell drops as the game goes on. Blue = low bar, challenge on a hunch. Red = high bar, hold unless sure.</p>
     </div>
   );
 }
@@ -3534,16 +3672,17 @@ function Methodology(){
   const p={fontSize:13,lineHeight:1.8,color:"#4b5563",margin:0};
   const code={background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:8,padding:"12px 14px",marginTop:10,fontSize:12,fontFamily:"'SF Mono',Menlo,monospace",color:"#374151",lineHeight:1.8};
   const tangoUrl="https://tangotiger.com/index.php/site/comments/re288-run-expectancy-by-the-24-base-out-states-x-12-plate-count-states-recu";
-  const tangoCBA="https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge";
+  const tangoCBA2026="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league";
+const tangoCBA="https://tangotiger.com/index.php/site/article/cost-benefit-analysis-of-making-an-abs-challenge";
   const tangoPRV="https://tangotiger.com/index.php/site/article/probably-right-valuation-for-abs-challenge-skill-is-jt-the-best-or-worst-in-the-league";
   const link={color:"#2563eb",textDecoration:"none",fontWeight:500,borderBottom:"1px solid rgba(37,99,235,.3)"};
   return(
     <div style={{maxWidth:680}}>
-      <div style={s}><div style={h}>Decision Framework</div><p style={p}>The challenge decision compares the run value of flipping a call (the benefit) against the cost of losing the challenge (the cost). A lost challenge does not cost a run — it costs the option value of the challenges you can no longer make, and that decays as the game shortens. Refit on 2026 MLB per <a href={tangoPRV} target="_blank" rel="noopener noreferrer" style={link}>Tango's probably-right valuation</a>: about 0.001 runs per remaining out while holding two challenges, 0.003 while holding the last one.</p><div style={code}>benefit = |ΔRE| of flipping the call<br/>cost = 0.001 × outs remaining (two in hand)<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= 0.003 × outs remaining (one in hand)<br/><br/>Break-even = cost / (benefit + cost)<br/>CHALLENGE when your confidence {"≥"} break-even</div></div>
+      <div style={s}><div style={h}>Decision Framework</div><p style={p}>The challenge decision compares the run value of flipping a call (the benefit) against the cost of losing the challenge (the cost). A lost challenge does not cost a run — it costs the option value of the challenges you can no longer make, and that decays as the game shortens. Refit on 2026 MLB per <a href={tangoPRV} target="_blank" rel="noopener noreferrer" style={link}>Tango's probably-right valuation</a>: about 0.001 runs per remaining out while holding two challenges, 0.003 while holding the last one.</p><div style={code}>benefit = |RE(corrected call) − RE(call as made)|<br/>cost = 0.001 × outs remaining (two in hand)<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= 0.003 × outs remaining (one in hand)<br/><br/>Break-even = cost / (benefit + cost)<br/>CHALLENGE when your confidence {"≥"} break-even</div></div>
 
-      <div style={s}><div style={h}>Challenge Thresholds</div><p style={p}>Thresholds are computed live from the cost model, not read from a lookup. The earlier build used Tango's Feb 2025 table, fit on AAA data, which priced a challenge at a flat ~0.20 runs. That constant carried no outs term: against 2026 MLB it runs about 4x too high at first pitch and 20x too high by the 8th. Across the 9,461 real catcher-side opportunities in 2026 it demanded a median 67% confidence where the cost model asks 20%.</p><p style={{...p,marginTop:8}}>The correction is that the threshold depends on outs remaining and challenges in hand, not only on count and base-out state — and outs remaining moves it further than the count does. A 2-2 with a man on first needs 26% in the 1st and 14% by the 5th holding two. Holding the last challenge in the 1st it needs 53%; that asymmetry is the only place conservatism survives the math.</p></div>
+      <div style={s}><div style={h}>Challenge Thresholds</div><p style={p}>Thresholds are computed live from the cost model, not read from a lookup. The earlier build used Tango's Feb 2025 table, fit on AAA data, which priced a challenge at a flat ~0.20 runs. That constant carried no outs term: against 2026 MLB it runs about 4x too high at first pitch and 20x too high by the 8th. Across the 10,309 catcher-side missed calls in 2026 with a challenge in hand, it demanded a median 61% confidence where the cost model asks 26%.</p><p style={{...p,marginTop:8}}>The correction is that the threshold depends on outs remaining and challenges in hand, not only on count and base-out state — and outs remaining moves it further than the count does. A 2-2 with a man on first and nobody out needs 10% in the 1st and 6% by the 5th holding two. Holding the last challenge in the 1st it needs 26%; that asymmetry is the only place conservatism survives the math.</p></div>
 
-      <div style={s}><div style={h}>Count-Level Run Expectancy (RE288)</div><p style={p}>288 cells across 12 counts × 8 base states × 3 out states, following the <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>RE288 framework developed by Tom Tango</a>. Values are computed recursively: the RE at each count state is derived from the transition probabilities (ball, called strike, foul, in-play) and the resulting RE of the next state, anchored to empirical RE24 values at plate appearance endpoints. This assumes the same run expectancy for an event (single, HR, etc.) regardless of count — a simplification Tango notes is reasonable given empirical evidence.</p><p style={{...p,marginTop:8}}>The matrix tab includes three views: Run Expectancy (absolute RE from each state), Run Values (marginal RE relative to the 0-0 count in each base-out state — <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>Tango's "second chart"</a>), and Count Δ (RE shift when a ball is overturned to a strike, which drives the challenge model). A key insight from the Run Values view: the 3-2 count is the only count that flips between hitter's and pitcher's count depending on base-out state.</p></div>
+      <div style={s}><div style={h}>Count-Level Run Expectancy (RE288)</div><p style={p}>288 cells across 12 counts × 8 base states × 3 out states, following the <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>RE288 framework developed by Tom Tango</a>. This is the table Baseball Savant uses for its ABS challenge leaderboard. Each count is the base-out RE24 plus a fixed share of what a walk is worth (3-0 60%, 3-1 40%, 2-0 30%, 3-2 15%, 2-1 and 1-0 10%) or of what a strikeout costs (0-2 40%, 1-2 30%, 0-1 and 2-2 15%, 1-1 5%). Tango publishes the rule, not the full league table, so the RE24 underneath was solved from the leaderboard itself: 263 states have an exact published call value, and one RE24 reproduces all of them to 5 decimals.</p><p style={{...p,marginTop:8}}>The matrix tab includes three views: Run Expectancy (absolute RE from each state), Run Values (marginal RE relative to the 0-0 count in each base-out state — <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>Tango's "second chart"</a>), and Count Δ (run value of a ball overturned to a strike: RE if the pitch is a strike minus RE if it is a ball, which drives the challenge model). Because every count is a fixed share of a walk or a strikeout, 2-1 and 1-0 carry the same value in every state, as do 0-1 and 2-2, and 3-2 is always a hitter's count.</p></div>
 
       <div style={s}><div style={h}>Terminal Transitions (K / BB)</div><p style={p}>Overturning a pitch doesn't always produce another count — it can end the plate appearance. On any x-2 count, overturning a ball to a strike produces a strikeout: the batter is out, runners stay, and RE drops to the new base-out state at 0-0 (or zero if it's the third out). On any 3-x count, overturning a strike to a ball produces a walk: the batter takes first, forced runners advance, and a bases-loaded walk scores a run. These terminal transitions change the base-out state, not just the count, and are modeled explicitly.</p></div>
 
@@ -3551,7 +3690,7 @@ function Methodology(){
 
       <div style={s}><div style={h}>Matchup Adjustment</div><p style={p}>The engine preloads season xwOBA for all players from Baseball Savant (via a serverless API endpoint) with a statsapi fallback. For each at-bat, it computes a matchup multiplier that scales ΔRE to reflect how the current batter-pitcher pairing compares to league average. This is our addition on top of Tango's base framework, which treats all matchups equally.</p><div style={code}>batterFactor = batterXwOBA / leagueXwOBA<br/>pitcherFactor = pitcherXwOBA_against / leagueXwOBA<br/>matchupMultiplier = batterFactor × pitcherFactor<br/>adjustedΔRE = ΔRE × matchupMultiplier</div><p style={{...p,marginTop:8}}>A league-average matchup produces a multiplier of ~1.0×, leaving the challenge decision unchanged. An elite hitter facing a bad pitcher can push ×1.3+, meaning the same base-out state swing is worth 30% more runs — lowering the break-even confidence threshold. A weak hitter vs. an ace compresses ΔRE, raising the bar for when to challenge. The multiplier is clamped to [0.5, 2.0] to prevent extreme small-sample distortions.</p></div>
 
-      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card uses a Gaussian confidence model to estimate the probability a call was wrong, given the measured pitch location. The effective strike zone is expanded by the ball radius in <b>both</b> dimensions: Statcast pX/pZ measure ball center, and a pitch is a strike if any part of the ball crosses any part of the zone. So the ball-center strike zone extends 9.95" from plate center horizontally (17" plate + 2.9" ball diameter, halved) and 1.45" beyond szTop/szBot vertically. A pitch grazing the top of the zone has its ball center 1.45" above szTop and is correctly classified as a strike. The Gaussian σ is calibrated empirically from 64,499 MLB 2026 called pitches: at each |edge_dist|, what fraction of umpire calls disagreed with the ABS truth? Maximum-likelihood fit yields σ = 1.48" for called strikes and σ = 1.24" for called balls — umpires are noisier on strike calls (the classic zone-expansion bias) than on ball calls. For a called strike, confidence = P(pitch truly outside zone) = Φ(distance / σ_strike). For a called ball, confidence = P(pitch truly inside zone) = 1 − Φ(distance / σ_ball). Confidence is capped at 5–95% since tracking systems are never perfect. The verdict compares this confidence against the Tango threshold for the current count/bases/outs — CHALLENGE if conf ≥ threshold, HOLD otherwise.</p><div style={code}>Zone half-width   = (17 + 2.9) / 2 / 12 = 0.829 ft<br/>Vertical pad      = 1.45" / 12 = 0.121 ft  (above szTop / below szBot)<br/>σ_called_strike   = 1.48"  (MLE on 20,889 called strikes, 8.94% wrong)<br/>σ_called_ball     = 1.24"  (MLE on 43,610 called balls, 3.87% wrong)<br/>P(outside) = Φ(dist_inches / σ)    // normal CDF<br/>Batter challenges called strike → conf = P(outside),  σ = σ_called_strike<br/>Catcher challenges called ball → conf = P(inside),   σ = σ_called_ball<br/>CHALLENGE when conf ≥ Tango threshold</div></div>
+      <div style={s}><div style={h}>Strike Zone Confidence Model</div><p style={p}>The zone card estimates the probability the call was wrong from the measured pitch location. The strike/ball boundary is the batter's ABS zone (plate width, szTop/szBot from the feed) grown by one ball radius (1.45") with rounded corners: a pitch is a strike if any part of the ball touches the zone, and the ball is a circle. Confidence is a Gaussian on the signed distance from the ball center to that boundary. σ depends on the source of the location: Hawk-Eye / Statcast coordinates (live, signal, demo) are the ABS measurement itself, so σ = 0.05" and confidence is close to a step; Trackman and hand-placed pitches use σ = 1.0". Measured on 8,252 ABS-resolved 2026 pitches, the ruling flips 0.047" inside the geometric line, and the model uses that offset. No floor or cap: a pitch that was not close scores 0%. The verdict compares this confidence against the break-even for the current game state: CHALLENGE if conf ≥ break-even, HOLD otherwise.</p><div style={code}>Boundary   = ABS zone + 1.45" ball radius, rounded corners<br/>d          = signed distance, ball center to boundary (+ = outside)<br/>P(ball)    = Φ((d − (−0.047")) / σ)<br/>σ          = 0.05" Hawk-Eye · 1.0" Trackman / manual<br/>Batter challenges called strike → conf = P(ball)<br/>Catcher challenges called ball  → conf = 1 − P(ball)<br/>CHALLENGE when conf ≥ break-even</div></div>
 
       <div style={s}><div style={h}>Demo Mode</div><p style={p}>The demo walkthrough features 8 real called pitches from the 2025 World Series Game 7 (LAD 5, TOR 4, 11 innings). Pitch coordinates are actual Statcast data from the MLB Stats API feed/live endpoint for gamePk 813024. Scenarios were selected for game impact — ump scorecard's top missed calls, high-leverage extras situations, and series-ending at-bats — not proximity to the zone edge. Player xwOBA values are 2025 season figures from Baseball Savant.</p></div>
 
@@ -3590,7 +3729,7 @@ function Methodology(){
 
       <div style={s}><div style={h}>Limitations & Next Steps</div><p style={p}>The matchup adjustment uses season xwOBA from Statcast, which strips out defense and luck but doesn't yet capture platoon splits (L/R advantages), recent form, or pitch-type matchup edges. A production system would incorporate rolling xwOBA windows, platoon splits, and potentially batter hot/cold zones against specific pitch types. Trackman data can also be consumed via websocket or CSV for NCAA/college environments where ABS is being adopted.</p></div>
 
-      <div style={{...s,background:"#f9fafb"}}><div style={{...h,fontSize:13}}>Data Sources</div><p style={{...p,fontSize:12}}>RE288 matrix computed recursively per <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (2018)</a>, using 2010–2015 Retrosheet play-by-play data. Challenge thresholds per <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (Feb 2025)</a>, validated against 2025 AAA challenge data. The RE288 framework and the concept of count-level run values are one of Tango's many contributions to modern sabermetrics. Methodology follows Tango, Lichtman & Dolphin, "The Book: Playing the Percentages in Baseball." Live game data from MLB Stats API (statsapi.mlb.com). xwOBA data from Baseball Savant (baseballsavant.mlb.com).</p></div>
+      <div style={{...s,background:"#f9fafb"}}><div style={{...h,fontSize:13}}>Data Sources</div><p style={{...p,fontSize:12}}>RE288: the table behind Baseball Savant's 2026 ABS challenge leaderboard (Tango), recovered exactly from the leaderboard's published call values. Challenge cost after <a href={tangoCBA2026} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (Aug 2026)</a>: 0.001 R per out remaining with two challenges in hand, 0.003 with one; the outs-aware break-even replaces the flat thresholds of his <a href={tangoCBA} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Feb 2025 table</a>. The RE288 framework follows <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={{...link,fontSize:12}}>Tango (2018)</a> and "The Book" (Tango, Lichtman &amp; Dolphin). Strike/ball truth: any part of the ball touches the batter's ABS zone at the middle of the plate, with the boundary offset measured on 8,252 ABS-resolved 2026 pitches. Reasonable-pitch flag per Baseball Savant's definition. Live game data from MLB Stats API (statsapi.mlb.com); xwOBA from Baseball Savant.</p></div>
     </div>
   );
 }
