@@ -3414,7 +3414,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
         <div style={{flex:1}}/>
         {mView==="delta"&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>0 R</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,#fff,rgb(214,48,49))",border:"1px solid #e5e7eb"}}/><span>1 R+</span></div>}
         {(mView==="re"||mView==="rv")&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>{mView==="rv"?"Pitcher":"0 R"}</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
-          <span>{mView==="rv"?"Hitter":`3 R · white = ${RE_AVG_INNING.toFixed(2)}`}</span></div>}
+          <span>{mView==="rv"?"Hitter · ±0.6 R, white = 0-0":`3 R · white = ${RE_AVG_INNING.toFixed(2)}`}</span></div>}
       </div>
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -3431,9 +3431,9 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
                   if(mView==="re"){return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,color:heatText(reFrac(re),0,1),borderBottom:"1px solid #f3f4f6",background:heatColor(reFrac(re),0,1),fontVariantNumeric:"tabular-nums"}}>{re.toFixed(2)}</td>);}
                   if(mView==="rv"){
                     const base00=data[b.key]["0-0"];const rv=re-base00;
-                    const rvAll=Object.values(data).flatMap(r=>COUNTS.map(cc=>r[cc]-r["0-0"]));
-                    const rvMn=Math.min(...rvAll),rvMx=Math.max(...rvAll);
-                    return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:c==="0-0"?"#f9fafb":heatColor((rv-rvMn)/(rvMx-rvMn)*(mx-mn)+mn,mn,mx),color:c==="0-0"?"#9ca3af":heatText((rv-rvMn)/(rvMx-rvMn)*(mx-mn)+mn,mn,mx),fontVariantNumeric:"tabular-nums"}}>{c==="0-0"?"—":`${rv>0?"+":""}${rv.toFixed(2)}`}</td>);
+                    // White = 0 (the 0-0 count itself), fixed ±0.6 R on every outs tab, so a shade means the same runs everywhere.
+                    const rf=0.5+0.5*Math.max(-1,Math.min(1,rv/0.6));
+                    return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:c==="0-0"?"#f9fafb":heatColor(rf,0,1),color:c==="0-0"?"#9ca3af":heatText(rf,0,1),fontVariantNumeric:"tabular-nums"}}>{c==="0-0"?"—":`${rv>0?"+":""}${rv.toFixed(2)}`}</td>);
                   }
                   // Call value: RE if the pitch is a ball minus RE if it is a strike (always positive, no signs), one red scale.
                   const sw=callSwing(b.key,mOuts,...c.split("-").map(Number)),t=sw==null?0:Math.min(sw/1.0,1);
@@ -3445,7 +3445,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?`Expected runs from this state through the end of the half-inning. White = an average inning (bases empty, nobody out, 0-0: ${RE_AVG_INNING.toFixed(2)} runs); bluer toward 0 runs, redder toward 3.`:mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count.":"Run value of the call: RE if the pitch is a ball minus RE if it is a strike, from this count (ball four and strike three included). The same size whichever way it was called. Darker = more runs riding on the call."}</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?`Expected runs from this state through the end of the half-inning. White = an average inning (bases empty, nobody out, 0-0: ${RE_AVG_INNING.toFixed(2)} runs); bluer toward 0 runs, redder toward 3.`:mView==="rv"?"Run value of the count: RE at this count minus RE at 0-0 in the same base-out state. White = 0 (the 0-0 count); blue = pitcher's count, red = hitter's count, full colour at ±0.6 runs.":"Run value of the call: RE if the pitch is a ball minus RE if it is a strike, from this count (ball four and strike three included). The same size whichever way it was called. Darker = more runs riding on the call."}</p>
     </div>
   );
 }
