@@ -69,6 +69,9 @@ const breakEven=(swing,outsRem,chalLeft)=>{
 const halfOf=(v)=>String(v??"top").toLowerCase().startsWith("b")||v===false?"bottom":"top";
 const fmt=v=>v==null?"—":v.toFixed(3);
 function heatColor(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));if(t<.5){const s=t/.5;return`rgb(${Math.round(33+(255-33)*s)},${Math.round(102+(255-102)*s)},${Math.round(172+(255-172)*s)})`}const s=(t-.5)/.5;return`rgb(${Math.round(255-(255-214)*s)},${Math.round(255-(255-48)*s)},${Math.round(255-(255-49)*s)})`}
+// RE Matrix scale (Tango): white = an average inning (bases empty, nobody out, 0-0), blue at 0 runs, red at 3.
+const RE_AVG_INNING=RE[0]["000"]["0-0"],RE_RED_AT=3;
+const reFrac=v=>v<=RE_AVG_INNING?0.5*Math.max(0,v)/RE_AVG_INNING:0.5+0.5*Math.min(1,(v-RE_AVG_INNING)/(RE_RED_AT-RE_AVG_INNING));
 function heatText(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));return(t<.2||t>.8)?"#fff":"#333"}
 function dColor(d){if(d==null)return"transparent";const t=Math.min(Math.abs(d)/1.0,1);if(d<0)return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`}
 function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
@@ -3411,8 +3414,8 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
         <div style={{width:1,height:20,background:"#e5e7eb"}}/>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>View</span><div style={{display:"flex",gap:3}}>{[{k:"re",l:"Run Expectancy"},{k:"rv",l:"Run Values"},{k:"delta",l:"Count Δ"}].map(v=><button key={v.k} onClick={()=>setMView(v.k)} style={seg(mView===v.k)}>{v.l}</button>)}</div></div>
         <div style={{flex:1}}/>
-        {(mView==="re"||mView==="rv")&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>{mView==="rv"?"Pitcher":"Low"}</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
-          <span>{mView==="rv"?"Hitter":"High"}</span></div>}
+        {(mView==="re"||mView==="rv")&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>{mView==="rv"?"Pitcher":"0 R"}</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
+          <span>{mView==="rv"?"Hitter":`3 R · white = ${RE_AVG_INNING.toFixed(2)}`}</span></div>}
       </div>
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -3426,7 +3429,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
                 <td style={{padding:"5px 10px",fontSize:12,fontWeight:500,color:"#374151",borderBottom:"1px solid #f3f4f6",background:ri%2?"#f9fafb":"#fff",position:"sticky",left:0,zIndex:1,whiteSpace:"nowrap"}}><div style={{display:"flex",alignItems:"center",gap:5}}><Diamond bs={b.key} size={18}/><span>{b.label==="---"?"Empty":b.label}</span></div></td>
                 {COUNTS.map(c=>{
                   const re=data[b.key][c];
-                  if(mView==="re"){return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,color:heatText(re,mn,mx),borderBottom:"1px solid #f3f4f6",background:heatColor(re,mn,mx),fontVariantNumeric:"tabular-nums"}}>{re.toFixed(2)}</td>);}
+                  if(mView==="re"){return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,color:heatText(reFrac(re),0,1),borderBottom:"1px solid #f3f4f6",background:heatColor(reFrac(re),0,1),fontVariantNumeric:"tabular-nums"}}>{re.toFixed(2)}</td>);}
                   if(mView==="rv"){
                     const base00=data[b.key]["0-0"];const rv=re-base00;
                     const rvAll=Object.values(data).flatMap(r=>COUNTS.map(cc=>r[cc]-r["0-0"]));
@@ -3441,7 +3444,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?"Expected runs from this state through end of half-inning. Blue = pitcher-favorable, Red = hitter-favorable.":mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count.":"Run value of a ball overturned to a strike: RE if the pitch is a strike minus RE if it is a ball, from this count (strike three and ball four included). A strike overturned to a ball is the same size with the sign flipped. Blue = favors defense."}</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?`Expected runs from this state through the end of the half-inning. White = an average inning (bases empty, nobody out, 0-0: ${RE_AVG_INNING.toFixed(2)} runs); bluer toward 0 runs, redder toward 3.`:mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count.":"Run value of a ball overturned to a strike: RE if the pitch is a strike minus RE if it is a ball, from this count (strike three and ball four included). A strike overturned to a ball is the same size with the sign flipped. Blue = favors defense."}</p>
     </div>
   );
 }
