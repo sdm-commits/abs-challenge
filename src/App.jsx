@@ -3587,7 +3587,7 @@ function ZonePicker({side,pick,lists,onPick,onStep}){
                 style={{display:"flex",alignItems:"baseline",gap:8,padding:"6px 8px",borderRadius:6,cursor:"pointer",background:i===act?"#f3f4f6":"transparent",fontSize:12}}>
                 <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"#111827",fontWeight:sel?700:500}}>{zvName(it.side,x)} <span style={{fontSize:10,fontWeight:600,color:"#9ca3af"}}>{zvAbbr(it.side,x)}</span></span>
                 {x.games!=null&&<span style={{flex:"none",fontSize:10,color:"#6b7280",fontVariantNumeric:"tabular-nums"}}>{x.games} G</span>}
-                <span style={{flex:"none",minWidth:50,textAlign:"right",fontSize:11,fontWeight:700,fontVariantNumeric:"tabular-nums",color:up?"#16a34a":"#dc2626"}}>{zvSgn(x.runsAboveAvg)} R</span>
+                <span style={{flex:"none",minWidth:50,textAlign:"right",fontSize:11,fontWeight:700,fontVariantNumeric:"tabular-nums",color:up?"#16a34a":"#dc2626"}}>{zvSgn(x.runsAboveAvg,1)} R</span>
               </div>);})}
           </div>))}
       </div>}
@@ -3688,7 +3688,7 @@ function ZoneView(){
           {stat("Missed calls",Sv.misses,null,"with a challenge in hand")}
           {stat("Overturned",Sv.overturns,null,`of ${Sv.challenges} challenges`)}
           {stat("Share overturned",`${Math.round(Sv.share*100)}%`,Sv.share>=Sv.lgShare?"#16a34a":"#dc2626",`league ${Math.round(Sv.lgShare*100)}%`)}
-          {stat("Runs vs avg",`${zvSgn(Sv.runsAboveAvg)} R`,Sv.runsAboveAvg>=0?"#16a34a":"#dc2626","Savant, Probably-Right")}
+          {stat("Runs vs avg",`${zvSgn(Sv.runsAboveAvg,1)} R`,Sv.runsAboveAvg>=0?"#16a34a":"#dc2626","Savant, Probably-Right")}
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
           {D.views.length>1&&<div style={{display:"flex",gap:3}}>{D.views.map((v,i)=><button key={i} onClick={()=>setHand(i)} style={seg(hand===i)}>{v.label==="Right-handed batters"?"RHB":v.label==="Left-handed batters"?"LHB":v.label}</button>)}</div>}
@@ -3698,10 +3698,10 @@ function ZoneView(){
         {D.views.length>1&&(()=>{
           // Missed calls per hand come straight from the location data, whose labels are solved so the hands add up
           // to Savant's club total exactly (analysis/q60).
-          // Same for runs, in hundredths, so the two hands add to Savant's runs above average exactly.
-          const T=Math.round(Sv.runsAboveAvg*100),rr=D.views.map(v=>v.runsTotal*100),rs=rr.reduce((x,y)=>x+y,0)||1,rw=rr.map(r=>r+(T-rs)*(r/rs)),rf=rw.map(Math.floor);
+          // Runs in tenths, as Savant displays them, split so the two hands add to the headline exactly.
+          const T=Math.round(Sv.runsAboveAvg*10),rr=D.views.map(v=>v.runsTotal*10),rs=rr.reduce((x,y)=>x+y,0)||1,rw=rr.map(r=>r+(T-rs)*(r/rs)),rf=rw.map(Math.floor);
           let rl=T-rf.reduce((x,y)=>x+y,0);rw.map((r,i)=>[r-rf[i],i]).sort((x,y)=>y[0]-x[0]).forEach(([,i])=>{if(rl>0){rf[i]++;rl--;}});
-          return<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {V.misses} of the club's {Sv.misses} missed calls · {zvSgn(rf[hand]/100)} of its {zvSgn(Sv.runsAboveAvg)} R</div>;
+          return<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {V.misses} of the club's {Sv.misses} missed calls · {zvSgn(rf[hand]/10,1)} of its {zvSgn(Sv.runsAboveAvg,1)} R</div>;
         })()}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(280px,100%),1fr))",gap:12,alignItems:"start"}}>
           <div style={{border:"1px solid #e5e7eb",borderRadius:8,padding:8}}>
