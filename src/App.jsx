@@ -3608,6 +3608,41 @@ function callSwing(bases,outs,b,s){
   const c=`${b}-${s}`,ball=outcomeRE(bases,outs,c,"ball"),strike=outcomeRE(bases,outs,c,"strike");
   return ball==null||strike==null?null:ball-strike;
 }
+// Break-even by call value: the whole decision in one grid. Rows = runs the call is worth, columns = inning
+// (top of the inning, nobody out), one panel per challenges in hand. Independent of the count: any call of that
+// value at that point in the game needs the same confidence.
+const BE_VALUES=[0.05,0.10,0.15,0.20,0.30,0.40];
+const BE_INNINGS=[1,3,5,7,9];
+function BreakEvenByValue({threshBg,threshText}){
+  const ord=i=>i===1?"1st":i===2?"2nd":i===3?"3rd":`${i}th`;
+  const panel=(chal)=>(
+    <div style={{flex:"1 1 320px",minWidth:0}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#111827",margin:"0 0 8px"}}>{chal===2?"Two challenges in hand":"One challenge in hand"}</div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"separate",borderSpacing:3,minWidth:300}}>
+          <thead><tr>
+            <th style={{fontSize:10,fontWeight:600,color:"#6b7280",textAlign:"right",padding:"0 6px 4px 0",textTransform:"uppercase",letterSpacing:.5}}>Call worth</th>
+            {BE_INNINGS.map(i=><th key={i} style={{fontSize:10,fontWeight:600,color:"#6b7280",textAlign:"center",padding:"0 0 4px",textTransform:"uppercase",letterSpacing:.5}}>{ord(i)}<div style={{fontSize:9,fontWeight:500,textTransform:"none",color:"#9ca3af",letterSpacing:0}}>{outsRemaining(i,"top",0)} outs</div></th>)}
+          </tr></thead>
+          <tbody>{BE_VALUES.map(v=>(
+            <tr key={v}>
+              <td style={{fontSize:13,fontWeight:700,color:"#111827",textAlign:"right",padding:"0 6px 0 0",fontVariantNumeric:"tabular-nums"}}>{v.toFixed(2)} R</td>
+              {BE_INNINGS.map(i=>{const be=breakEven(v,outsRemaining(i,"top",0),chal);return(
+                <td key={i} title={`${v.toFixed(2)} R call, ${ord(i)} inning: challenge if at least ${be}% sure`} style={{textAlign:"center",padding:"7px 2px",borderRadius:6,fontSize:13,fontWeight:700,fontVariantNumeric:"tabular-nums",background:threshBg(be),color:threshText(be)}}>{be}%</td>);})}
+            </tr>))}</tbody>
+        </table>
+      </div>
+    </div>);
+  return(
+    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:14,marginTop:16}}>
+      <div style={{fontSize:15,fontWeight:700,color:"#111827"}}>Break-even by call value</div>
+      <div style={{fontSize:11,color:"#6b7280",margin:"2px 0 12px"}}>How sure you need to be that the call was wrong, for any call worth this many runs, at the top of each inning.</div>
+      <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>{panel(2)}{panel(1)}</div>
+      <p style={{marginTop:10,fontSize:11,color:"#9ca3af",lineHeight:1.6}}>Break-even = cost ÷ (call value + cost), Tango's Probably-Right valuation. Cost of a lost challenge: 0.001 R per out left with two in hand, 0.003 with one. Call values come from the RE288 above (the grid by count shows which counts and base states carry which value).</p>
+    </div>
+  );
+}
+
 function ThresholdMatrix(){
   const[tOuts,setTOuts]=useState(0);
   const[tInn,setTInn]=useState(1);
@@ -3659,6 +3694,7 @@ function ThresholdMatrix(){
         </div>
       </div>
       <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Confidence needed to challenge, from the engine's cost model: break-even = cost / (call value + cost). Call value is the run swing between ball and strike in this count and base-out state (2026 RE288); the same number applies to a called ball or a called strike. Cost is 0.001 R per out left in the game while holding two challenges, 0.003 with the last one, so every cell drops as the game goes on. Blue = low bar, challenge on a hunch. Red = high bar, hold unless sure.</p>
+      <BreakEvenByValue threshBg={threshBg} threshText={threshText}/>
     </div>
   );
 }
