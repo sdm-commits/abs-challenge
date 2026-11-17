@@ -3609,6 +3609,7 @@ function ZoneView(){
   const[tip,setTip]=useState(null);
   const[showFlips,setShowFlips]=useState(true);
   const[hoverFlip,setHoverFlip]=useState(null);
+  const[selFlip,setSelFlip]=useState(null);
   const[flipSort,setFlipSort]=useState("runs");
   const[err,setErr]=useState(null);
   const cvRef=useRef(null);
@@ -3619,10 +3620,11 @@ function ZoneView(){
     const sd=hit?hit.side:want.side;
     setIndex(ix);setSide(sd);setPick(hit?hit.id:zvSortList(sd==="catcher"?ix.catchers:ix.clubs,sd,"runs")[0]?.id??null);
   }).catch(()=>setErr("Zone data not found."));},[]);
-  useEffect(()=>{setHoverFlip(null);},[side,pick,hand]);
+  useEffect(()=>{setHoverFlip(null);setSelFlip(null);},[side,pick,hand]);
+  useEffect(()=>{if(selFlip!=null)document.getElementById(`zv-flip-${selFlip}`)?.scrollIntoView({block:"nearest"});},[selFlip]);
   useEffect(()=>{
     if(!pick)return;let live=true;setD(null);setErr(null);
-    getJson(`/zones/${side}_${pick}.json`).then(d=>{if(live){setD(d);setHand(0);}}).catch(()=>{if(live)setErr("Could not load this zone file.");});
+    getJson(`/zones/${side}_${pick}.json`).then(d=>{if(live){setD(d);setHand(h=>h<d.views.length?h:0);}}).catch(()=>{if(live)setErr("Could not load this zone file.");});
     return()=>{live=false;};
   },[side,pick]);
   // Clubs carry no games count, so "games" only applies to catchers.
@@ -3692,20 +3694,21 @@ function ZoneView(){
           {stat("Missed calls",Sv.misses,null,"with a challenge in hand")}
           {stat("Overturned",Sv.overturns,null,`of ${Sv.challenges} challenges`)}
           {stat("Share overturned",`${Math.round(Sv.share*100)}%`,Sv.share>=Sv.lgShare?"#16a34a":"#dc2626",`league ${Math.round(Sv.lgShare*100)}%`)}
-          {stat("Runs vs avg",`${zvSgn(Sv.runsAboveAvg,1)} R`,Sv.runsAboveAvg>=0?"#16a34a":"#dc2626","Savant, Probably-Right")}
+          {stat("Runs vs avg",`${zvSgn(Sv.runsAboveAvg,1)} R`,Math.round(Sv.runsAboveAvg*10)>0?"#16a34a":Math.round(Sv.runsAboveAvg*10)<0?"#dc2626":"#374151","Savant, Probably-Right")}
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-          {D.views.length>1&&<div style={{display:"flex",gap:3}}>{D.views.map((v,i)=><button key={i} onClick={()=>setHand(i)} style={seg(hand===i)}>{v.label==="Right-handed batters"?"RHB":v.label==="Left-handed batters"?"LHB":v.label}</button>)}</div>}
-          <div style={{display:"flex",gap:3}}>{[["fire","Challenged"],["left","Not challenged"]].map(([k,l])=><button key={k} onClick={()=>setLayer(k)} style={seg(layer===k)}>{l}</button>)}</div>
-          <div style={{display:"flex",gap:3}}>{[["me",cat?"Catcher":"Club"],["lg","League avg"],["diff","Difference"]].map(([k,l])=><button key={k} onClick={()=>setWho(k)} style={seg(who===k)}>{l}</button>)}</div>
+          {D.views.length>1&&<div style={{display:"flex",gap:3}}>{D.views.map((v,i)=><button key={i} onClick={()=>setHand(i)} aria-pressed={hand===i} style={seg(hand===i)}>{v.label==="Right-handed batters"?"RHB":v.label==="Left-handed batters"?"LHB":v.label}</button>)}</div>}
+          <div style={{display:"flex",gap:3}}>{[["fire","Challenged"],["left","Not challenged"]].map(([k,l])=><button key={k} onClick={()=>setLayer(k)} aria-pressed={layer===k} style={seg(layer===k)}>{l}</button>)}</div>
+          <div style={{display:"flex",gap:3}}>{[["me",cat?"Catcher":"Club"],["lg","League avg"],["diff","Difference"]].map(([k,l])=><button key={k} onClick={()=>setWho(k)} aria-pressed={who===k} style={seg(who===k)}>{l}</button>)}</div>
           <button onClick={()=>setShowFlips(f=>!f)} style={seg(showFlips)} aria-pressed={showFlips}>K / BB flips</button>
         </div>
         {D.views.length>1&&(()=>{
           // Missed calls per hand come straight from the location data, whose labels are solved so the hands add up
           // to Savant's club total exactly (analysis/q60).
           // Runs in tenths, as Savant displays them, split so the two hands add to the headline exactly.
-          const T=Math.round(Sv.runsAboveAvg*10),rr=D.views.map(v=>v.runsTotal*10),rs=rr.reduce((x,y)=>x+y,0)||1,rw=rr.map(r=>r+(T-rs)*(r/rs)),rf=rw.map(Math.floor);
-          let rl=T-rf.reduce((x,y)=>x+y,0);rw.map((r,i)=>[r-rf[i],i]).sort((x,y)=>y[0]-x[0]).forEach(([,i])=>{if(rl>0){rf[i]++;rl--;}});
+          const T=Math.round(Sv.runsAboveAvg*10),rr=D.views.map(v=>v.runsTotal*10),rf=rr.map(Math.floor);
+          let rl=T-rf.reduce((x,y)=>x+y,0);const ord=rr.map((r,i)=>[r-rf[i],i]).sort((x,y)=>y[0]-x[0]);
+          for(let k=0;rl!==0&&k<4*ord.length;k++){const[,ix]=rl>0?ord[k%ord.length]:ord[ord.length-1-(k%ord.length)];rf[ix]+=rl>0?1:-1;rl+=rl>0?-1:1;}
           return<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {V.misses} of the club's {Sv.misses} missed calls · {zvSgn(rf[hand]/10,1)} of its {zvSgn(Sv.runsAboveAvg,1)} R</div>;
         })()}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(280px,100%),1fr))",gap:12,alignItems:"start"}}>
@@ -3715,10 +3718,10 @@ function ZoneView(){
               <canvas ref={cvRef} width={61} height={61} style={{position:"absolute",left:"-0.8197%",top:"-0.8197%",width:"101.6393%",height:"101.6393%"}}/>
               <svg viewBox="0 0 400 400" style={{position:"absolute",inset:0,width:"100%",height:"100%"}} dangerouslySetInnerHTML={{__html:zoneSvg}}/>
               {showFlips&&<svg viewBox="0 0 400 400" style={{position:"absolute",inset:0,width:"100%",height:"100%"}}>
-                {(V.flips||[]).map((f,i)=>{const cx=(f.x+2)*100,cy=(4.5-f.z)*100,hot=hoverFlip===i,r=hot?8:5;
+                {(V.flips||[]).map((f,i)=>{const cx=(f.x+2)*100,cy=(4.5-f.z)*100,hot=hoverFlip===i||selFlip===i,r=hot?8:5;
                   const st={fill:f.ot?"#111827":"#ffffff",fillOpacity:f.ot?1:.85,stroke:"#111827",strokeWidth:hot?2.5:1.5,cursor:"pointer"};
                   const lab=`${f.date} ${f.opp} · ${f.count} · ${f.ot?"won back":"left alone"} · ${f.runs.toFixed(2)} R`;
-                  const ev={onMouseEnter:()=>setHoverFlip(i),onMouseLeave:()=>setHoverFlip(null),onClick:()=>setHoverFlip(h=>h===i?null:i)};
+                  const ev={onMouseEnter:()=>setHoverFlip(i),onMouseLeave:()=>setHoverFlip(null),onClick:()=>setSelFlip(h=>h===i?null:i)};
                   return(<g key={i} {...ev}><title>{lab}</title>
                     {f.k&&f.bb?<path d={`M${cx},${cy-r*1.3} L${cx+r*1.3},${cy} L${cx},${cy+r*1.3} L${cx-r*1.3},${cy} Z`} {...st}/>
                      :f.k?<circle cx={cx} cy={cy} r={r} {...st}/>
@@ -3778,7 +3781,7 @@ function ZoneView(){
               <span style={{fontSize:12,fontWeight:700,color:"#111827"}}>K / BB flips{D.views.length>1?` · ${V.label}`:""}</span>
               <span style={{fontSize:11,color:"#6b7280"}}>{V.flips.length} missed calls on strike three or ball four · {won} won back</span>
               <div style={{flex:1}}/>
-              <div style={{display:"flex",gap:3}}>{[["runs","Runs"],["date","Date"]].map(([k,l])=><button key={k} onClick={()=>setFlipSort(k)} style={seg(flipSort===k)}>{l}</button>)}</div>
+              <div style={{display:"flex",gap:3}}>{[["runs","Runs"],["date","Date"]].map(([k,l])=><button key={k} onClick={()=>setFlipSort(k)} aria-pressed={flipSort===k} style={seg(flipSort===k)}>{l}</button>)}</div>
             </div>
             <div style={{overflowX:"auto",maxHeight:320,overflowY:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
@@ -3786,8 +3789,8 @@ function ZoneView(){
                   <th style={th}>Date</th><th style={th}>Opp</th><th style={th}>Inn</th><th style={th}>Count</th><th style={th}>Batter</th><th style={th}>Call</th><th style={th}>Result</th><th style={{...th,textAlign:"right"}}>Runs</th>
                 </tr></thead>
                 <tbody>{rows.map(f=>(
-                  <tr key={f.i} onMouseEnter={()=>setHoverFlip(f.i)} onMouseLeave={()=>setHoverFlip(null)} onClick={()=>setHoverFlip(h=>h===f.i?null:f.i)}
-                    style={{background:hoverFlip===f.i?"#f3f4f6":"transparent",cursor:"pointer"}}>
+                  <tr key={f.i} id={`zv-flip-${f.i}`} onMouseEnter={()=>setHoverFlip(f.i)} onMouseLeave={()=>setHoverFlip(null)} onClick={()=>setSelFlip(h=>h===f.i?null:f.i)}
+                    aria-selected={selFlip===f.i} style={{background:selFlip===f.i?"#e5e7eb":hoverFlip===f.i?"#f3f4f6":"transparent",cursor:"pointer"}}>
                     <td style={td}>{f.date.slice(5)}</td><td style={td}>{f.opp}</td><td style={td}>{f.half==="T"?"▲":"▼"}{f.inn}</td><td style={td}>{f.count}, {f.outs} out</td>
                     <td style={td}>{f.batter}</td><td style={td}>{what(f)}</td>
                     <td style={{...td,fontWeight:700,color:f.ot?"#16a34a":"#dc2626"}}>{f.ot?"Won back":"Left alone"}</td>
@@ -3819,19 +3822,21 @@ function BreakEvenByValue({threshBg,threshText}){
   const panel=(chal)=>(
     <div style={{flex:"1 1 320px",minWidth:0}}>
       <div style={{fontSize:13,fontWeight:700,color:"#111827",margin:"0 0 8px"}}>{chal===2?"Two challenges in hand":"One challenge in hand"}</div>
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"separate",borderSpacing:3,minWidth:300}}>
+      <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
+      <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:300}}>
           <thead><tr>
-            <th style={{fontSize:10,fontWeight:600,color:"#6b7280",textAlign:"right",padding:"0 6px 4px 0",textTransform:"uppercase",letterSpacing:.5}}>Call worth</th>
-            {BE_INNINGS.map(i=><th key={i} style={{fontSize:10,fontWeight:600,color:"#6b7280",textAlign:"center",padding:"0 0 4px",textTransform:"uppercase",letterSpacing:.5}}>{ord(i)}<div style={{fontSize:9,fontWeight:500,textTransform:"none",color:"#9ca3af",letterSpacing:0}}>{outsRemaining(i,"top",0)} outs</div></th>)}
+            <th style={{padding:"9px 10px",textAlign:"left",fontSize:10,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5,borderBottom:"1px solid #e5e7eb",background:"#fff",whiteSpace:"nowrap"}}>Call worth</th>
+            {BE_INNINGS.map(i=><th key={i} style={{padding:"9px 4px",textAlign:"center",fontSize:11,fontWeight:600,color:"#374151",borderBottom:"1px solid #e5e7eb",minWidth:46}}>{ord(i)}<div style={{fontSize:9,fontWeight:500,color:"#9ca3af"}}>{outsRemaining(i,"top",0)} outs</div></th>)}
           </tr></thead>
-          <tbody>{BE_VALUES.map(v=>(
+          <tbody>{BE_VALUES.map((v,ri)=>(
             <tr key={v}>
-              <td style={{fontSize:13,fontWeight:700,color:"#111827",textAlign:"right",padding:"0 6px 0 0",fontVariantNumeric:"tabular-nums"}}>{v.toFixed(2)} R</td>
+              <td style={{padding:"5px 10px",fontSize:12,fontWeight:500,color:"#374151",borderBottom:"1px solid #f3f4f6",background:ri%2?"#f9fafb":"#fff",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>{v.toFixed(2)} R</td>
               {BE_INNINGS.map(i=>{const be=breakEven(v,outsRemaining(i,"top",0),chal);return(
-                <td key={i} title={`${v.toFixed(2)} R call, ${ord(i)} inning: challenge if at least ${be}% sure`} style={{textAlign:"center",padding:"7px 2px",borderRadius:6,fontSize:13,fontWeight:700,fontVariantNumeric:"tabular-nums",background:threshBg(be),color:threshText(be)}}>{be}%</td>);})}
+                <td key={i} title={`${v.toFixed(2)} R call, ${ord(i)} inning: challenge if at least ${be}% sure`} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:threshBg(be),color:threshText(be),fontVariantNumeric:"tabular-nums"}}>{be}%</td>);})}
             </tr>))}</tbody>
         </table>
+      </div>
       </div>
     </div>);
   return(
