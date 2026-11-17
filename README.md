@@ -92,7 +92,7 @@ On game selection it preloads season xwOBA for both rosters through a [Vercel se
 
 **Terminal Transitions** — Strikeouts and walks are full base-out state changes, not count changes. Overturning a ball on an x-2 count adds an out; overturning a strike on a 3-x count walks the batter, advances forced runners, and scores the run with the bases loaded.
 
-**RE288 Matrix** — All 288 run-expectancy states (12 counts × 8 base states × 3 outs) in three views: run expectancy, run values relative to 0-0 in each base-out state, and the count delta of a ball-to-strike overturn including terminal deltas.
+**RE288 Matrix** — All 288 run-expectancy states (12 counts × 8 base states × 3 outs) in three views: run expectancy, run values relative to 0-0 in each base-out state, and the call value (ball minus strike, the runs riding on the call) including ball four and strike three.
 
 **Thresholds** — The break-even for every count and base state from the cost model, with inning, half, outs and challenges left as controls.
 
