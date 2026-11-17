@@ -73,8 +73,6 @@ function heatColor(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));if(t<
 const RE_AVG_INNING=RE[0]["000"]["0-0"],RE_RED_AT=3;
 const reFrac=v=>v<=RE_AVG_INNING?0.5*Math.max(0,v)/RE_AVG_INNING:0.5+0.5*Math.min(1,(v-RE_AVG_INNING)/(RE_RED_AT-RE_AVG_INNING));
 function heatText(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));return(t<.2||t>.8)?"#fff":"#333"}
-function dColor(d){if(d==null)return"transparent";const t=Math.min(Math.abs(d)/1.0,1);if(d<0)return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`}
-function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 
 // ============================================================
 // STRIKE ZONE — Gaussian confidence model
@@ -3383,7 +3381,7 @@ function ChallengeCard({r,persp,mode}){
 
 // Break-even color scale, shared by every break-even number and the Thresholds table.
 // Pivots at 25% (the top of the "Challenge" tier): blue below, red above, full red by 75%.
-const BAR_PIVOT=25;
+const BAR_PIVOT=25;   // white: the median break-even across all 2026 challenge opportunities (24.9%, n = 327,342; analysis/q64_median_breakeven.py)
 const barT=(v)=>v<BAR_PIVOT?Math.min((BAR_PIVOT-v)/BAR_PIVOT,1):Math.min((v-BAR_PIVOT)/50,1);
 function ConfidenceNum({thresh}){
   // Same palette as RE matrix: rgb(214,48,49) red, rgb(33,102,172) blue
@@ -3412,8 +3410,9 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
       <div className="mx-controls" style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Outs</span><div style={{display:"flex",gap:3}}>{[0,1,2].map(o=><button key={o} onClick={()=>setMOuts(o)} style={seg(mOuts===o)}>{o}</button>)}</div></div>
         <div style={{width:1,height:20,background:"#e5e7eb"}}/>
-        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>View</span><div style={{display:"flex",gap:3}}>{[{k:"re",l:"Run Expectancy"},{k:"rv",l:"Run Values"},{k:"delta",l:"Count Δ"}].map(v=><button key={v.k} onClick={()=>setMView(v.k)} style={seg(mView===v.k)}>{v.l}</button>)}</div></div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>View</span><div style={{display:"flex",gap:3}}>{[{k:"re",l:"Run Expectancy"},{k:"rv",l:"Run Values"},{k:"delta",l:"Call value"}].map(v=><button key={v.k} onClick={()=>setMView(v.k)} style={seg(mView===v.k)}>{v.l}</button>)}</div></div>
         <div style={{flex:1}}/>
+        {mView==="delta"&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>0 R</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,#fff,rgb(214,48,49))",border:"1px solid #e5e7eb"}}/><span>1 R+</span></div>}
         {(mView==="re"||mView==="rv")&&<div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>{mView==="rv"?"Pitcher":"0 R"}</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
           <span>{mView==="rv"?"Hitter":`3 R · white = ${RE_AVG_INNING.toFixed(2)}`}</span></div>}
       </div>
@@ -3436,15 +3435,17 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
                     const rvMn=Math.min(...rvAll),rvMx=Math.max(...rvAll);
                     return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:c==="0-0"?"#f9fafb":heatColor((rv-rvMn)/(rvMx-rvMn)*(mx-mn)+mn,mn,mx),color:c==="0-0"?"#9ca3af":heatText((rv-rvMn)/(rvMx-rvMn)*(mx-mn)+mn,mn,mx),fontVariantNumeric:"tabular-nums"}}>{c==="0-0"?"—":`${rv>0?"+":""}${rv.toFixed(2)}`}</td>);
                   }
-                  const sw=callSwing(b.key,mOuts,...c.split("-").map(Number));const d=sw==null?null:-sw;
-                  return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:dColor(d),color:d!=null?dText(d):"#d1d5db",fontVariantNumeric:"tabular-nums"}}>{d!=null?`${d>0?"+":""}${d.toFixed(2)}`:"—"}</td>);
+                  // Call value: RE if the pitch is a ball minus RE if it is a strike (always positive, no signs), one red scale.
+                  const sw=callSwing(b.key,mOuts,...c.split("-").map(Number)),t=sw==null?0:Math.min(sw/1.0,1);
+                  const bgc=sw==null?"transparent":`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`;
+                  return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:bgc,color:sw==null?"#d1d5db":t>0.78?"#fff":"#333",fontVariantNumeric:"tabular-nums"}}>{sw!=null?sw.toFixed(2):"—"}</td>);
                 })}
               </tr>
             ))}</tbody>
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?`Expected runs from this state through the end of the half-inning. White = an average inning (bases empty, nobody out, 0-0: ${RE_AVG_INNING.toFixed(2)} runs); bluer toward 0 runs, redder toward 3.`:mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count.":"Run value of a ball overturned to a strike: RE if the pitch is a strike minus RE if it is a ball, from this count (strike three and ball four included). A strike overturned to a ball is the same size with the sign flipped. Blue = favors defense."}</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>{mView==="re"?`Expected runs from this state through the end of the half-inning. White = an average inning (bases empty, nobody out, 0-0: ${RE_AVG_INNING.toFixed(2)} runs); bluer toward 0 runs, redder toward 3.`:mView==="rv"?"Marginal run value relative to the 0-0 count in each base-out state. Blue = pitcher's count, Red = hitter's count.":"Run value of the call: RE if the pitch is a ball minus RE if it is a strike, from this count (ball four and strike three included). The same size whichever way it was called. Darker = more runs riding on the call."}</p>
     </div>
   );
 }
@@ -3865,7 +3866,7 @@ function ThresholdMatrix(){
     if(v>=PIVOT)return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`;
     return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;
   };
-  const threshText=(v)=>tOf(v)>0.55?"#fff":"#374151";
+  const threshText=(v)=>tOf(v)>0.78?"#fff":"#374151";   // white text only on dark cells (>= ~3.6:1 contrast)
   const outsRem=outsRemaining(tInn,tHalf,tOuts);
   const cost=chalCost(outsRem,tChal);
   return(
@@ -3877,7 +3878,7 @@ function ThresholdMatrix(){
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:11,fontWeight:500,color:"#6b7280"}}>Challenges left</span><div style={{display:"flex",gap:3}}>{[2,1].map(c=><button key={c} onClick={()=>setTChal(c)} style={seg(tChal===c)}>{c}</button>)}</div></div>
         <div style={{flex:1}}/>
         <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#9ca3af"}}><span>Challenge</span><div style={{width:60,height:6,borderRadius:3,background:"linear-gradient(90deg,rgb(33,102,172),#fff,rgb(214,48,49))"}}/>
-          <span>Hold</span></div>
+          <span>Hold · white = 25%</span></div>
       </div>
       <div style={{fontSize:11,color:"#6b7280",margin:"0 4px 8px",fontVariantNumeric:"tabular-nums"}}>{outsRem} outs left in the game · a lost challenge costs {cost.toFixed(3)} R</div>
       <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
@@ -3902,7 +3903,7 @@ function ThresholdMatrix(){
           </table>
         </div>
       </div>
-      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Confidence needed to challenge, from the engine's cost model: break-even = cost / (call value + cost). Call value is the run swing between ball and strike in this count and base-out state (2026 RE288); the same number applies to a called ball or a called strike. Cost is 0.001 R per out left in the game while holding two challenges, 0.003 with the last one, so every cell drops as the game goes on. Blue = low bar, challenge on a hunch. Red = high bar, hold unless sure.</p>
+      <p style={{marginTop:8,fontSize:11,color:"#9ca3af",lineHeight:1.6,padding:"0 4px"}}>Confidence needed to challenge, from the engine's cost model: break-even = cost / (call value + cost). Call value is the run swing between ball and strike in this count and base-out state (2026 RE288); the same number applies to a called ball or a called strike. Cost is 0.001 R per out left in the game while holding two challenges, 0.003 with the last one, so every cell drops as the game goes on. White = 25%, the typical break-even across 2026's challenge opportunities (median of 327,342). Blue = lower bar, challenge on a hunch. Red = higher bar, hold unless sure.</p>
       <BreakEvenByValue threshBg={threshBg} threshText={threshText}/>
     </div>
   );
@@ -3927,7 +3928,7 @@ const tangoCBA="https://tangotiger.com/index.php/site/article/cost-benefit-analy
 
       <div style={s}><div style={h}>Challenge Thresholds</div><p style={p}>Thresholds are computed live from the cost model, not read from a lookup. The earlier build used Tango's Feb 2025 table, fit on AAA data, which priced a challenge at a flat ~0.20 runs. That constant carried no outs term: against 2026 MLB it runs about 4x too high at first pitch and 20x too high by the 8th. Across the 10,309 catcher-side missed calls in 2026 with a challenge in hand, it demanded a median 61% confidence where the cost model asks 26%.</p><p style={{...p,marginTop:8}}>The correction is that the threshold depends on outs remaining and challenges in hand, not only on count and base-out state — and outs remaining moves it further than the count does. A 2-2 with a man on first and nobody out needs 10% in the 1st and 6% by the 5th holding two. Holding the last challenge in the 1st it needs 26%; that asymmetry is the only place conservatism survives the math.</p></div>
 
-      <div style={s}><div style={h}>Count-Level Run Expectancy (RE288)</div><p style={p}>288 cells across 12 counts × 8 base states × 3 out states, following the <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>RE288 framework developed by Tom Tango</a>. This is the table Baseball Savant uses for its ABS challenge leaderboard. Each count is the base-out RE24 plus a fixed share of what a walk is worth (3-0 60%, 3-1 40%, 2-0 30%, 3-2 15%, 2-1 and 1-0 10%) or of what a strikeout costs (0-2 40%, 1-2 30%, 0-1 and 2-2 15%, 1-1 5%). Tango publishes the rule, not the full league table, so the RE24 underneath was solved from the leaderboard itself: 263 states have an exact published call value, and one RE24 reproduces all of them to 5 decimals.</p><p style={{...p,marginTop:8}}>The matrix tab includes three views: Run Expectancy (absolute RE from each state), Run Values (marginal RE relative to the 0-0 count in each base-out state — <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>Tango's "second chart"</a>), and Count Δ (run value of a ball overturned to a strike: RE if the pitch is a strike minus RE if it is a ball, which drives the challenge model). Because every count is a fixed share of a walk or a strikeout, 2-1 and 1-0 carry the same value in every state, as do 0-1 and 2-2, and 3-2 is always a hitter's count.</p></div>
+      <div style={s}><div style={h}>Count-Level Run Expectancy (RE288)</div><p style={p}>288 cells across 12 counts × 8 base states × 3 out states, following the <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>RE288 framework developed by Tom Tango</a>. This is the table Baseball Savant uses for its ABS challenge leaderboard. Each count is the base-out RE24 plus a fixed share of what a walk is worth (3-0 60%, 3-1 40%, 2-0 30%, 3-2 15%, 2-1 and 1-0 10%) or of what a strikeout costs (0-2 40%, 1-2 30%, 0-1 and 2-2 15%, 1-1 5%). Tango publishes the rule, not the full league table, so the RE24 underneath was solved from the leaderboard itself: 263 states have an exact published call value, and one RE24 reproduces all of them to 5 decimals.</p><p style={{...p,marginTop:8}}>The matrix tab includes three views: Run Expectancy (absolute RE from each state), Run Values (marginal RE relative to the 0-0 count in each base-out state — <a href={tangoUrl} target="_blank" rel="noopener noreferrer" style={link}>Tango's "second chart"</a>), and Call value (RE if the pitch is a ball minus RE if it is a strike: the runs riding on the call, the same whichever way it went, which drives the challenge model). Because every count is a fixed share of a walk or a strikeout, 2-1 and 1-0 carry the same value in every state, as do 0-1 and 2-2, and 3-2 is always a hitter's count.</p></div>
 
       <div style={s}><div style={h}>Terminal Transitions (K / BB)</div><p style={p}>Overturning a pitch doesn't always produce another count — it can end the plate appearance. On any x-2 count, overturning a ball to a strike produces a strikeout: the batter is out, runners stay, and RE drops to the new base-out state at 0-0 (or zero if it's the third out). On any 3-x count, overturning a strike to a ball produces a walk: the batter takes first, forced runners advance, and a bases-loaded walk scores a run. These terminal transitions change the base-out state, not just the count, and are modeled explicitly.</p></div>
 
