@@ -3607,6 +3607,9 @@ function ZoneView(){
   const[layer,setLayer]=useState("fire");
   const[who,setWho]=useState("me");
   const[tip,setTip]=useState(null);
+  const[showFlips,setShowFlips]=useState(true);
+  const[hoverFlip,setHoverFlip]=useState(null);
+  const[flipSort,setFlipSort]=useState("runs");
   const[err,setErr]=useState(null);
   const cvRef=useRef(null);
   const getJson=url=>fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();});
@@ -3616,6 +3619,7 @@ function ZoneView(){
     const sd=hit?hit.side:want.side;
     setIndex(ix);setSide(sd);setPick(hit?hit.id:zvSortList(sd==="catcher"?ix.catchers:ix.clubs,sd,"runs")[0]?.id??null);
   }).catch(()=>setErr("Zone data not found."));},[]);
+  useEffect(()=>{setHoverFlip(null);},[side,pick,hand]);
   useEffect(()=>{
     if(!pick)return;let live=true;setD(null);setErr(null);
     getJson(`/zones/${side}_${pick}.json`).then(d=>{if(live){setD(d);setHand(0);}}).catch(()=>{if(live)setErr("Could not load this zone file.");});
@@ -3694,6 +3698,7 @@ function ZoneView(){
           {D.views.length>1&&<div style={{display:"flex",gap:3}}>{D.views.map((v,i)=><button key={i} onClick={()=>setHand(i)} style={seg(hand===i)}>{v.label==="Right-handed batters"?"RHB":v.label==="Left-handed batters"?"LHB":v.label}</button>)}</div>}
           <div style={{display:"flex",gap:3}}>{[["fire","Challenged"],["left","Not challenged"]].map(([k,l])=><button key={k} onClick={()=>setLayer(k)} style={seg(layer===k)}>{l}</button>)}</div>
           <div style={{display:"flex",gap:3}}>{[["me",cat?"Catcher":"Club"],["lg","League avg"],["diff","Difference"]].map(([k,l])=><button key={k} onClick={()=>setWho(k)} style={seg(who===k)}>{l}</button>)}</div>
+          <button onClick={()=>setShowFlips(f=>!f)} style={seg(showFlips)} aria-pressed={showFlips}>K / BB flips</button>
         </div>
         {D.views.length>1&&(()=>{
           // Missed calls per hand come straight from the location data, whose labels are solved so the hands add up
@@ -3709,7 +3714,26 @@ function ZoneView(){
             <div style={{position:"relative",width:"100%",aspectRatio:"1/1",overflow:"hidden"}}>
               <canvas ref={cvRef} width={61} height={61} style={{position:"absolute",left:"-0.8197%",top:"-0.8197%",width:"101.6393%",height:"101.6393%"}}/>
               <svg viewBox="0 0 400 400" style={{position:"absolute",inset:0,width:"100%",height:"100%"}} dangerouslySetInnerHTML={{__html:zoneSvg}}/>
+              {showFlips&&<svg viewBox="0 0 400 400" style={{position:"absolute",inset:0,width:"100%",height:"100%"}}>
+                {(V.flips||[]).map((f,i)=>{const cx=(f.x+2)*100,cy=(4.5-f.z)*100,hot=hoverFlip===i,r=hot?8:5;
+                  const st={fill:f.ot?"#111827":"#ffffff",fillOpacity:f.ot?1:.85,stroke:"#111827",strokeWidth:hot?2.5:1.5,cursor:"pointer"};
+                  const lab=`${f.date} ${f.opp} · ${f.count} · ${f.ot?"won back":"left alone"} · ${f.runs.toFixed(2)} R`;
+                  const ev={onMouseEnter:()=>setHoverFlip(i),onMouseLeave:()=>setHoverFlip(null),onClick:()=>setHoverFlip(h=>h===i?null:i)};
+                  return(<g key={i} {...ev}><title>{lab}</title>
+                    {f.k&&f.bb?<path d={`M${cx},${cy-r*1.3} L${cx+r*1.3},${cy} L${cx},${cy+r*1.3} L${cx-r*1.3},${cy} Z`} {...st}/>
+                     :f.k?<circle cx={cx} cy={cy} r={r} {...st}/>
+                     :<rect x={cx-r} y={cy-r} width={2*r} height={2*r} {...st}/>}
+                    {hot&&<circle cx={cx} cy={cy} r={r+7} fill="none" stroke="#111827" strokeWidth={1.5} strokeDasharray="3 3"/>}
+                  </g>);})}
+              </svg>}
             </div>
+            {showFlips&&(V.flips||[]).length>0&&<div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:9,color:"#6b7280",alignItems:"center"}}>
+              <span style={{display:"inline-flex",alignItems:"center",gap:3}}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="#fff" stroke="#111827" strokeWidth="1.5"/></svg>strike three</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:3}}><svg width="10" height="10"><rect x="1" y="1" width="8" height="8" fill="#fff" stroke="#111827" strokeWidth="1.5"/></svg>ball four</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:3}}><svg width="12" height="12"><path d="M6,0.5 L11.5,6 L6,11.5 L0.5,6 Z" fill="#fff" stroke="#111827" strokeWidth="1.5"/></svg>3-2 (both)</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:3}}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="#111827"/></svg>solid = won back by a challenge</span>
+              <span style={{display:"inline-flex",alignItems:"center",gap:3}}><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="#fff" stroke="#111827" strokeWidth="1.5"/></svg>hollow = left alone</span>
+            </div>}
             <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,fontSize:9,color:"#6b7280"}}>
               {who==="diff"?<><span>league more</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.25,.5,.75,1].map(t=>zvCss(zvRamp(ZV_DIV,t))).join(",")})`}}/><span>{cat?"catcher":"club"} more</span></>
                 :<><span>0</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.125,.25,.375,.5,.625,.75,.875,1].map(t=>zvCss(zvRamp(ZV_SEQ,t))).join(",")})`}}/><span>{vmaxLeg.toFixed(2)} / game / sq ft</span></>}
@@ -3742,6 +3766,37 @@ function ZoneView(){
             <div style={{fontSize:9,color:"#9ca3af",marginTop:4}}>– = fewer than {ZV_ME_FLOOR} {ring.who} / {ZV_LG_FLOOR} league missed calls in the cell · hover or tap a cell for counts</div>
           </div>
         </div>
+        {(V.flips||[]).length>0&&(()=>{
+          const rows=(V.flips||[]).map((f,i)=>({...f,i})).sort(flipSort==="runs"?(a,b)=>b.runs-a.runs:(a,b)=>a.date<b.date?-1:a.date>b.date?1:a.inn-b.inn);
+          const won=V.flips.filter(f=>f.ot).length;
+          const what=f=>cat?(f.k&&f.bb?"Called ball four, was strike three":f.bb?"Called ball four, was a strike":"Called a ball, was strike three")
+                           :(f.k&&f.bb?"Called strike three, was ball four":f.k?"Called strike three, was a ball":"Called a strike, was ball four");
+          const th={fontSize:9,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.4,textAlign:"left",padding:"6px 8px",borderBottom:"1px solid #e5e7eb",whiteSpace:"nowrap"};
+          const td={fontSize:11,color:"#374151",padding:"6px 8px",borderBottom:"1px solid #f3f4f6",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"};
+          return(<div style={{marginTop:14,border:"1px solid #e5e7eb",borderRadius:8,overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"8px 10px",borderBottom:"1px solid #e5e7eb"}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#111827"}}>K / BB flips{D.views.length>1?` · ${V.label}`:""}</span>
+              <span style={{fontSize:11,color:"#6b7280"}}>{V.flips.length} missed calls on strike three or ball four · {won} won back</span>
+              <div style={{flex:1}}/>
+              <div style={{display:"flex",gap:3}}>{[["runs","Runs"],["date","Date"]].map(([k,l])=><button key={k} onClick={()=>setFlipSort(k)} style={seg(flipSort===k)}>{l}</button>)}</div>
+            </div>
+            <div style={{overflowX:"auto",maxHeight:320,overflowY:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead style={{position:"sticky",top:0,background:"#fff"}}><tr>
+                  <th style={th}>Date</th><th style={th}>Opp</th><th style={th}>Inn</th><th style={th}>Count</th><th style={th}>Batter</th><th style={th}>Call</th><th style={th}>Result</th><th style={{...th,textAlign:"right"}}>Runs</th>
+                </tr></thead>
+                <tbody>{rows.map(f=>(
+                  <tr key={f.i} onMouseEnter={()=>setHoverFlip(f.i)} onMouseLeave={()=>setHoverFlip(null)} onClick={()=>setHoverFlip(h=>h===f.i?null:f.i)}
+                    style={{background:hoverFlip===f.i?"#f3f4f6":"transparent",cursor:"pointer"}}>
+                    <td style={td}>{f.date.slice(5)}</td><td style={td}>{f.opp}</td><td style={td}>{f.half==="T"?"▲":"▼"}{f.inn}</td><td style={td}>{f.count}, {f.outs} out</td>
+                    <td style={td}>{f.batter}</td><td style={td}>{what(f)}</td>
+                    <td style={{...td,fontWeight:700,color:f.ot?"#16a34a":"#dc2626"}}>{f.ot?"Won back":"Left alone"}</td>
+                    <td style={{...td,textAlign:"right"}}>{f.runs.toFixed(2)}</td>
+                  </tr>))}</tbody>
+              </table>
+            </div>
+          </div>);
+        })()}
         <p style={{fontSize:10,color:"#9ca3af",lineHeight:1.6,margin:"10px 0 0"}}>Baseball Savant ABS challenge leaderboard, 2026 · catcher's view{cat?", inside on the left":V.flip?", a lefty's inside edge on the right":""}</p>
       </div>)}
     </div>
