@@ -3819,19 +3819,21 @@ function BreakEvenByValue({threshBg,threshText}){
   const panel=(chal)=>(
     <div style={{flex:"1 1 320px",minWidth:0}}>
       <div style={{fontSize:13,fontWeight:700,color:"#111827",margin:"0 0 8px"}}>{chal===2?"Two challenges in hand":"One challenge in hand"}</div>
-      <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"separate",borderSpacing:3,minWidth:300}}>
+      <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:10,overflow:"hidden"}}>
+      <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:300}}>
           <thead><tr>
-            <th style={{fontSize:10,fontWeight:600,color:"#6b7280",textAlign:"right",padding:"0 6px 4px 0",textTransform:"uppercase",letterSpacing:.5}}>Call worth</th>
-            {BE_INNINGS.map(i=><th key={i} style={{fontSize:10,fontWeight:600,color:"#6b7280",textAlign:"center",padding:"0 0 4px",textTransform:"uppercase",letterSpacing:.5}}>{ord(i)}<div style={{fontSize:9,fontWeight:500,textTransform:"none",color:"#9ca3af",letterSpacing:0}}>{outsRemaining(i,"top",0)} outs</div></th>)}
+            <th style={{padding:"9px 10px",textAlign:"left",fontSize:10,fontWeight:600,color:"#6b7280",textTransform:"uppercase",letterSpacing:.5,borderBottom:"1px solid #e5e7eb",background:"#fff",whiteSpace:"nowrap"}}>Call worth</th>
+            {BE_INNINGS.map(i=><th key={i} style={{padding:"9px 4px",textAlign:"center",fontSize:11,fontWeight:600,color:"#374151",borderBottom:"1px solid #e5e7eb",minWidth:46}}>{ord(i)}<div style={{fontSize:9,fontWeight:500,color:"#9ca3af"}}>{outsRemaining(i,"top",0)} outs</div></th>)}
           </tr></thead>
-          <tbody>{BE_VALUES.map(v=>(
+          <tbody>{BE_VALUES.map((v,ri)=>(
             <tr key={v}>
-              <td style={{fontSize:13,fontWeight:700,color:"#111827",textAlign:"right",padding:"0 6px 0 0",fontVariantNumeric:"tabular-nums"}}>{v.toFixed(2)} R</td>
+              <td style={{padding:"5px 10px",fontSize:12,fontWeight:500,color:"#374151",borderBottom:"1px solid #f3f4f6",background:ri%2?"#f9fafb":"#fff",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>{v.toFixed(2)} R</td>
               {BE_INNINGS.map(i=>{const be=breakEven(v,outsRemaining(i,"top",0),chal);return(
-                <td key={i} title={`${v.toFixed(2)} R call, ${ord(i)} inning: challenge if at least ${be}% sure`} style={{textAlign:"center",padding:"7px 2px",borderRadius:6,fontSize:13,fontWeight:700,fontVariantNumeric:"tabular-nums",background:threshBg(be),color:threshText(be)}}>{be}%</td>);})}
+                <td key={i} title={`${v.toFixed(2)} R call, ${ord(i)} inning: challenge if at least ${be}% sure`} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:threshBg(be),color:threshText(be),fontVariantNumeric:"tabular-nums"}}>{be}%</td>);})}
             </tr>))}</tbody>
         </table>
+      </div>
       </div>
     </div>);
   return(
