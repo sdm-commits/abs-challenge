@@ -3454,7 +3454,8 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
 // Data: public/zones/*.json from analysis/q57 (KDE + ring), totals reconciled to Savant's leaderboard.
 // ============================================================
 const ZV_RINGS=["in 1.5+","in 0.5-1.5","in 0-0.5","out 0-0.5","out 0.5-1.5","out 1.5+"];
-const ZV_JET=[[0,0,.5],[0,0,1],[0,.5,1],[0,1,1],[.5,1,.5],[1,1,0],[1,.5,0],[1,0,0],[.5,0,0]];
+// Club / League: one hue, light -> dark on white, so all three maps share a background and a reading direction.
+const ZV_SEQ=[[1,1,1],[.91,.86,.99],[.70,.55,.93],[.45,.25,.73],[.24,.08,.45]];
 const ZV_DIV=[[.02,.19,.38],[.26,.58,.76],[.97,.97,.97],[.84,.38,.30],[.40,0,.05]];
 const ZV_ME_FLOOR=5,ZV_LG_FLOOR=15;
 const zvRamp=(stops,t)=>{t=Math.max(0,Math.min(1,t))*(stops.length-1);const i=Math.min(Math.floor(t),stops.length-2),f=t-i;return stops[i].map((c,k)=>Math.round(255*(c*(1-f)+stops[i+1][k]*f)));};
@@ -3485,7 +3486,7 @@ function zoneRingSvg(D,V,mode){
       if(mode==="diff"&&k in diff){const v=diff[k];fill=v>=0?"#16a34a":"#dc2626";op=Math.min(.85,.05+Math.abs(v)/dmax*.8);lab=zvSgn(v*100,0);strong=Math.abs(v)>=dmax*.55;tip=`${who} ${Math.round(me[k][0]*100)}% of ${me[k][1]} · league ${Math.round(lg[k][0]*100)}%`;}
       else if(mode!=="diff"&&k in(mode==="me"?me:lg)){const[v,n]=(mode==="me"?me:lg)[k];const dv=v-center;fill=dv>=0?"#16a34a":"#dc2626";op=Math.min(.85,.05+Math.abs(dv)/smax*.8);lab=`${Math.round(v*100)}%`;strong=Math.abs(dv)>=smax*.55;tip=`${Math.round(v*100)}% of ${n} missed calls`;}
       else if(missBand)tip=mode==="lg"?"too few missed calls":`fewer than ${ZV_ME_FLOOR} missed calls`;
-      s+=`<polygon points="${P}" fill="${fill}" fill-opacity="${op}" stroke="#fff" stroke-width="1.5"><title>${tip}</title></polygon>`;
+      s+=`<polygon points="${P}" fill="${fill}" fill-opacity="${op}" stroke="#fff" stroke-width="1.5"${tip?` data-tip="${tip}" style="cursor:pointer"`:""}/>`;
       const mx=pts.reduce((t,p)=>t+p[0],0)/4,my=pts.reduce((t,p)=>t+p[1],0)/4;
       const rot=ed==="inside"||ed==="outside"?` transform="rotate(-90 ${mx} ${my})"`:"";
       if(lab)s+=`<text x="${mx}" y="${my}" dy="0.35em" text-anchor="middle" font-family="SF Mono, ui-monospace, monospace" font-size="11" font-weight="${strong?700:500}" fill="#111827" pointer-events="none"${rot}>${lab}</text>`;
@@ -3605,6 +3606,7 @@ function ZoneView(){
   const[hand,setHand]=useState(0);
   const[layer,setLayer]=useState("fire");
   const[who,setWho]=useState("me");
+  const[tip,setTip]=useState(null);
   const[err,setErr]=useState(null);
   const cvRef=useRef(null);
   const getJson=url=>fetch(url).then(r=>{if(!r.ok)throw new Error(r.status);return r.json();});
@@ -3644,8 +3646,9 @@ function ZoneView(){
   useEffect(()=>{
     if(!V||!cvRef.current)return;
     const g=V.kde[layer][who],n=61,ctx=cvRef.current.getContext("2d"),img=ctx.createImageData(n,n);
-    const vmax=who==="diff"?Math.max(...g.map(Math.abs))||1:Math.max(...V.kde[layer].me,...V.kde[layer].lg)||1;
-    for(let r=0;r<n;r++)for(let c=0;c<n;c++){const v=g[r*n+c],o=((n-1-r)*n+c)*4;const rgb=who==="diff"?zvRamp(ZV_DIV,(v/vmax+1)/2):zvRamp(ZV_JET,v/vmax);img.data.set([...rgb,255],o);}
+    // One scale for all three maps (the larger of player and league), so colour strength means the same thing in each.
+    const vmax=Math.max(...V.kde[layer].me,...V.kde[layer].lg)||1;
+    for(let r=0;r<n;r++)for(let c=0;c<n;c++){const v=g[r*n+c],o=((n-1-r)*n+c)*4;const rgb=who==="diff"?zvRamp(ZV_DIV,(v/vmax+1)/2):zvRamp(ZV_SEQ,v/vmax);img.data.set([...rgb,255],o);}
     ctx.putImageData(img,0,0);
   },[V,layer,who]);
   const seg=(active)=>({padding:"5px 10px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:active?"#111827":"#f3f4f6",color:active?"#fff":"#6b7280",fontFamily:"inherit"});
@@ -3659,10 +3662,10 @@ function ZoneView(){
     const X=x=>(x+2)*100,Z=z=>(4.5-z)*100,hw=D.zone.halfWidthFt,dark=who!=="diff";
     zoneSvg=`<rect x="${X(-hw)}" y="${Z(D.zone.top)}" width="${2*hw*100}" height="${(D.zone.top-D.zone.bot)*100}" fill="none" stroke="#111827" stroke-width="3"/>`+
       `<path d="M${X(-hw)},${Z(0.78)} H${X(hw)} V${Z(0.70)} L${X(0)},${Z(0.62)} L${X(-hw)},${Z(0.70)} Z" fill="#fff" stroke="#111827" stroke-width="1.5"/>`+
-      `<text x="8" y="392" font-size="13" font-weight="600" fill="${dark?"#fff":"#374151"}">${cat?"Inside":V.flip?"Outside":"Inside"}</text>`+
-      `<text x="392" y="392" font-size="13" font-weight="600" fill="${dark?"#fff":"#374151"}" text-anchor="end">${cat?"Outside":V.flip?"Inside":"Outside"}</text>`;
+      `<text x="8" y="392" font-size="13" font-weight="600" fill="#374151">${cat?"Inside":V.flip?"Outside":"Inside"}</text>`+
+      `<text x="392" y="392" font-size="13" font-weight="600" fill="#374151" text-anchor="end">${cat?"Outside":V.flip?"Inside":"Outside"}</text>`;
     ring=zoneRingSvg(D,V,who);
-    const g=V.kde[layer][who];vmaxLeg=who==="diff"?Math.max(...g.map(Math.abs))||1:Math.max(...V.kde[layer].me,...V.kde[layer].lg)||1;
+    vmaxLeg=Math.max(...V.kde[layer].me,...V.kde[layer].lg)||1;
   }
   const whoTxt={me:cat?"Catcher":"Club",lg:"League-average "+(cat?"catcher":"club"),diff:"Difference vs league"}[who];
   return(
@@ -3711,12 +3714,24 @@ function ZoneView(){
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,fontSize:9,color:"#6b7280"}}>
               {who==="diff"?<><span>league more</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.25,.5,.75,1].map(t=>zvCss(zvRamp(ZV_DIV,t))).join(",")})`}}/><span>{cat?"catcher":"club"} more</span></>
-                :<><span>0</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.125,.25,.375,.5,.625,.75,.875,1].map(t=>zvCss(zvRamp(ZV_JET,t))).join(",")})`}}/><span>{vmaxLeg.toFixed(2)} / game / sq ft</span></>}
+                :<><span>0</span><div style={{flex:1,height:6,borderRadius:3,background:`linear-gradient(90deg,${[0,.125,.25,.375,.5,.625,.75,.875,1].map(t=>zvCss(zvRamp(ZV_SEQ,t))).join(",")})`}}/><span>{vmaxLeg.toFixed(2)} / game / sq ft</span></>}
             </div>
           </div>
           <div style={{border:"1px solid #e5e7eb",borderRadius:8,padding:8}}>
             <div style={{...eb,color:"#9ca3af",marginBottom:6}}>{{me:`Share of missed calls challenged · ${ring.who} (${Math.round(V.share*100)}%)`,lg:`Share of missed calls challenged · league avg (${Math.round(V.lgShare*100)}%)`,diff:`Share challenged · ${ring.who} minus league (${zvSgn((V.share-V.lgShare)*100,0)} pts)`}[who]}</div>
-            <svg viewBox="-240 -250 480 500" style={{width:"100%",display:"block"}} dangerouslySetInnerHTML={{__html:ring.svg}}/>
+            <div style={{position:"relative"}} onMouseLeave={()=>setTip(null)}
+              onMouseMove={e=>{const t=e.target.closest?.("[data-tip]");if(!t){setTip(null);return;}const r=e.currentTarget.getBoundingClientRect();setTip({text:t.dataset.tip,x:e.clientX-r.left,y:e.clientY-r.top,w:r.width});}}
+              onClick={e=>{const t=e.target.closest?.("[data-tip]");const r=e.currentTarget.getBoundingClientRect();setTip(t?{text:t.dataset.tip,x:e.clientX-r.left,y:e.clientY-r.top,w:r.width}:null);}}>
+              <svg viewBox="-240 -250 480 500" style={{width:"100%",display:"block"}} dangerouslySetInnerHTML={{__html:ring.svg}}/>
+              {tip&&<div style={{position:"absolute",left:Math.min(Math.max(tip.x,70),tip.w-70),top:tip.y-10,transform:"translate(-50%,-100%)",background:"#111827",color:"#fff",fontSize:11,fontWeight:600,padding:"4px 8px",borderRadius:6,whiteSpace:"nowrap",pointerEvents:"none",fontVariantNumeric:"tabular-nums"}}>{tip.text}</div>}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:3,marginTop:6,fontSize:9,color:"#6b7280",flexWrap:"wrap"}}>
+              <span style={{...eb,marginRight:4}}>Rings, middle out</span>
+              {["1.5+","0.5–1.5","0–0.5"].map(b=><span key={"i"+b} style={{background:"#f3f4f6",borderRadius:3,padding:"1px 4px",fontVariantNumeric:"tabular-nums"}}>{b}</span>)}
+              <span style={{width:2,height:12,background:"#1f2937",margin:"0 2px"}} title="the ABS line"/>
+              {["0–0.5","0.5–1.5","1.5+"].map(b=><span key={"o"+b} style={{border:"1px solid #e5e7eb",borderRadius:3,padding:"0 4px",fontVariantNumeric:"tabular-nums"}}>{b}</span>)}
+              <span>in. from the line (black box): inside the zone, then outside · sides = the edge it missed on</span>
+            </div>
             <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,fontSize:9,color:"#6b7280"}}>
               {who==="diff"?<span>league more</span>:<span>{Math.max(0,Math.round((ring.center-ring.smax)*100))}%</span>}
               <div style={{flex:1,height:6,borderRadius:3,background:"linear-gradient(90deg,#dc2626,#fef2f2,#f0fdf4,#16a34a)"}}/>
@@ -3726,7 +3741,7 @@ function ZoneView(){
               <span style={{...eb,marginRight:2}}>{ring.who} runs vs avg by edge</span>
               {["top","bottom","inside","outside"].map(ed=>{const v=V.rings.runsEdge[ed]??0,pos=v>=0;return<span key={ed} style={{fontSize:10,fontWeight:700,fontVariantNumeric:"tabular-nums",color:pos?"#16a34a":"#dc2626",background:pos?"#f0fdf4":"#fef2f2",border:`1px solid ${pos?"#bbf7d0":"#fecaca"}`,borderRadius:4,padding:"1px 5px"}}>{ed} {zvSgn(v)}</span>;})}
             </div>
-            <div style={{fontSize:9,color:"#9ca3af",marginTop:4}}>– = fewer than {ZV_ME_FLOOR} {ring.who} / {ZV_LG_FLOOR} league missed calls in the cell · hover a cell for counts</div>
+            <div style={{fontSize:9,color:"#9ca3af",marginTop:4}}>– = fewer than {ZV_ME_FLOOR} {ring.who} / {ZV_LG_FLOOR} league missed calls in the cell · hover or tap a cell for counts</div>
           </div>
         </div>
         <p style={{fontSize:10,color:"#9ca3af",lineHeight:1.6,margin:"10px 0 0"}}>Baseball Savant ABS challenge leaderboard, 2026 · catcher's view{cat?", inside on the left":V.flip?", a lefty's inside edge on the right":""}</p>
