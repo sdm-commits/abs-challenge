@@ -3696,14 +3696,12 @@ function ZoneView(){
           <div style={{display:"flex",gap:3}}>{[["me",cat?"Catcher":"Club"],["lg","League avg"],["diff","Difference"]].map(([k,l])=><button key={k} onClick={()=>setWho(k)} style={seg(who===k)}>{l}</button>)}</div>
         </div>
         {D.views.length>1&&(()=>{
-          // Split Savant's club total across batter hands in proportion to the location data (largest remainder),
-          // so the hand counts always add up to the headline number.
-          const tot=D.views.reduce((t,v)=>t+v.misses,0)||1,raw=D.views.map(v=>Sv.misses*v.misses/tot),fl=raw.map(Math.floor);
-          let left=Sv.misses-fl.reduce((a,b)=>a+b,0);raw.map((r,i)=>[r-fl[i],i]).sort((a,b)=>b[0]-a[0]).forEach(([,i])=>{if(left>0){fl[i]++;left--;}});
+          // Missed calls per hand come straight from the location data, whose labels are solved so the hands add up
+          // to Savant's club total exactly (analysis/q60).
           // Same for runs, in hundredths, so the two hands add to Savant's runs above average exactly.
           const T=Math.round(Sv.runsAboveAvg*100),rr=D.views.map(v=>v.runsTotal*100),rs=rr.reduce((x,y)=>x+y,0)||1,rw=rr.map(r=>r+(T-rs)*(r/rs)),rf=rw.map(Math.floor);
           let rl=T-rf.reduce((x,y)=>x+y,0);rw.map((r,i)=>[r-rf[i],i]).sort((x,y)=>y[0]-x[0]).forEach(([,i])=>{if(rl>0){rf[i]++;rl--;}});
-          return<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {fl[hand]} of the club's {Sv.misses} missed calls · {zvSgn(rf[hand]/100)} of its {zvSgn(Sv.runsAboveAvg)} R</div>;
+          return<div style={{fontSize:11,color:"#6b7280",marginBottom:8,fontVariantNumeric:"tabular-nums"}}>{V.label}: {V.misses} of the club's {Sv.misses} missed calls · {zvSgn(rf[hand]/100)} of its {zvSgn(Sv.runsAboveAvg)} R</div>;
         })()}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(280px,100%),1fr))",gap:12,alignItems:"start"}}>
           <div style={{border:"1px solid #e5e7eb",borderRadius:8,padding:8}}>
