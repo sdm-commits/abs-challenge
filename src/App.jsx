@@ -73,8 +73,6 @@ function heatColor(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));if(t<
 const RE_AVG_INNING=RE[0]["000"]["0-0"],RE_RED_AT=3;
 const reFrac=v=>v<=RE_AVG_INNING?0.5*Math.max(0,v)/RE_AVG_INNING:0.5+0.5*Math.min(1,(v-RE_AVG_INNING)/(RE_RED_AT-RE_AVG_INNING));
 function heatText(v,mn,mx){const t=Math.max(0,Math.min(1,(v-mn)/(mx-mn)));return(t<.2||t>.8)?"#fff":"#333"}
-function dColor(d){if(d==null)return"transparent";const t=Math.min(Math.abs(d)/1.0,1);if(d<0)return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`}
-function dText(d){return d!=null&&Math.abs(d)>.2?"#fff":"#333"}
 
 // ============================================================
 // STRIKE ZONE — Gaussian confidence model
@@ -3383,7 +3381,7 @@ function ChallengeCard({r,persp,mode}){
 
 // Break-even color scale, shared by every break-even number and the Thresholds table.
 // Pivots at 25% (the top of the "Challenge" tier): blue below, red above, full red by 75%.
-const BAR_PIVOT=25;   // white: the median break-even across all 2026 challenge opportunities (24.9%, n = 327,342)
+const BAR_PIVOT=25;   // white: the median break-even across all 2026 challenge opportunities (24.9%, n = 327,342; analysis/q64_median_breakeven.py)
 const barT=(v)=>v<BAR_PIVOT?Math.min((BAR_PIVOT-v)/BAR_PIVOT,1):Math.min((v-BAR_PIVOT)/50,1);
 function ConfidenceNum({thresh}){
   // Same palette as RE matrix: rgb(214,48,49) red, rgb(33,102,172) blue
@@ -3440,7 +3438,7 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
                   // Call value: RE if the pitch is a ball minus RE if it is a strike (always positive, no signs), one red scale.
                   const sw=callSwing(b.key,mOuts,...c.split("-").map(Number)),t=sw==null?0:Math.min(sw/1.0,1);
                   const bgc=sw==null?"transparent":`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`;
-                  return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:bgc,color:sw==null?"#d1d5db":t>0.55?"#fff":"#333",fontVariantNumeric:"tabular-nums"}}>{sw!=null?sw.toFixed(2):"—"}</td>);
+                  return(<td key={c} style={{padding:"5px 3px",textAlign:"center",fontSize:11,fontWeight:600,borderBottom:"1px solid #f3f4f6",background:bgc,color:sw==null?"#d1d5db":t>0.78?"#fff":"#333",fontVariantNumeric:"tabular-nums"}}>{sw!=null?sw.toFixed(2):"—"}</td>);
                 })}
               </tr>
             ))}</tbody>
@@ -3868,7 +3866,7 @@ function ThresholdMatrix(){
     if(v>=PIVOT)return`rgb(${Math.round(255-(255-214)*t)},${Math.round(255-(255-48)*t)},${Math.round(255-(255-49)*t)})`;
     return`rgb(${Math.round(255-(255-33)*t)},${Math.round(255-(255-102)*t)},${Math.round(255-(255-172)*t)})`;
   };
-  const threshText=(v)=>tOf(v)>0.55?"#fff":"#374151";
+  const threshText=(v)=>tOf(v)>0.78?"#fff":"#374151";   // white text only on dark cells (>= ~3.6:1 contrast)
   const outsRem=outsRemaining(tInn,tHalf,tOuts);
   const cost=chalCost(outsRem,tChal);
   return(
