@@ -3454,9 +3454,9 @@ function MatrixView({mOuts,setMOuts,mView,setMView,seg}){
 // Data: public/zones/*.json from analysis/q57 (KDE + ring), totals reconciled to Savant's leaderboard.
 // ============================================================
 const ZV_RINGS=["in 1.5+","in 0.5-1.5","in 0-0.5","out 0-0.5","out 0.5-1.5","out 1.5+"];
-// Club / League: one hue, light -> dark on white, so all three maps share a background and a reading direction.
-const ZV_SEQ=[[1,1,1],[.91,.86,.99],[.70,.55,.93],[.45,.25,.73],[.24,.08,.45]];
 const ZV_DIV=[[.02,.19,.38],[.26,.58,.76],[.97,.97,.97],[.84,.38,.30],[.40,0,.05]];
+// Club / League use the red half of the Difference ramp (neutral -> dark red), so all three maps speak one colour language.
+const ZV_SEQ=ZV_DIV.slice(2);
 const ZV_ME_FLOOR=5,ZV_LG_FLOOR=15;
 const zvRamp=(stops,t)=>{t=Math.max(0,Math.min(1,t))*(stops.length-1);const i=Math.min(Math.floor(t),stops.length-2),f=t-i;return stops[i].map((c,k)=>Math.round(255*(c*(1-f)+stops[i+1][k]*f)));};
 const zvCss=rgb=>`rgb(${rgb.join(",")})`;
